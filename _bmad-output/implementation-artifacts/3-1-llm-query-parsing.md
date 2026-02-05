@@ -1,5 +1,7 @@
 # Story E-03.1: LLM 查询解析
 
+## Status: review
+
 ## Story Overview
 
 **原始需求描述**:
@@ -451,10 +453,11 @@ query: {
 
 ## Tasks / Subtasks
 
-- [ ] Phase 1: 创建 queryParserService.ts
-- [ ] Phase 2: 添加 IPC 处理器
-- [ ] Phase 3: 添加 Preload API
-- [ ] Phase 4: 运行编译检查
+- [x] Phase 1: 创建 queryParserService.ts
+- [x] Phase 2: 添加 IPC 处理器
+- [x] Phase 3: 添加 Preload API
+- [x] Phase 4: 运行编译检查
+- [x] Phase 5: 编写单元测试
 
 ## Dev Agent Record
 
@@ -485,8 +488,9 @@ query: {
 | 文件 | 操作 |
 |------|------|
 | `electron/services/queryParserService.ts` | 新建 |
-| `electron/main/index.ts` | 修改 |
-| `electron/preload/index.ts` | 修改 |
+| `electron/main/index.ts` | 修改 (IPC处理器) |
+| `electron/preload/index.ts` | 修改 (Preload API) |
+| `tests/services/queryParserService.spec.ts` | 新建 (单元测试) |
 
 ### Tests
 
@@ -497,14 +501,3 @@ console.log('查询类型:', result.parsed.type)
 console.log('识别人物:', result.parsed.entities.filter(e => e.type === 'person'))
 console.log('优化查询:', result.parsed.refinedQuery)
 ```
-
-### Completion Notes
-
-Story E-03.1 实现完成。
-
-已实现功能:
-- [x] LLM 查询解析
-- [x] 结构化参数提取
-- [x] 查询类型识别
-- [x] 规则匹配降级
-- [x] 结果缓存

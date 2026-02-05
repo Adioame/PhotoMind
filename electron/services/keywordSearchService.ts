@@ -108,7 +108,7 @@ export class KeywordSearchService {
   ): KeywordSearchResult | null {
     let bestScore = 0
     let matchedField = ''
-    const highlights: string[] = []
+    let highlights: string[] = []
 
     for (const field of fields) {
       const fieldValue = this.getFieldValue(photo, field)

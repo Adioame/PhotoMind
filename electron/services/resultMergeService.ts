@@ -256,7 +256,9 @@ export class ResultMergeService {
         // 更新总分
         existing.score = this.calculateTotalScore(existing.sources)
         // 合并高亮
-        existing.highlights = [...new Set([...existing.highlights, ...item.highlights])]
+        const existingHighlights = existing.highlights || []
+        const itemHighlights = item.highlights || []
+        existing.highlights = [...new Set([...existingHighlights, ...itemHighlights])]
       } else {
         scoreMap.set(item.photoUuid, {
           photoUuid: item.photoUuid,
@@ -270,7 +272,7 @@ export class ResultMergeService {
             weight: vectorWeight,
             weightedScore
           }],
-          highlights: item.highlights
+          highlights: item.highlights || []
         })
       }
     }

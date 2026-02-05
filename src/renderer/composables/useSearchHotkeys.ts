@@ -10,7 +10,9 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useSearchStore } from '@/stores/searchStore'
 
 export function useSearchHotkeys() {
-  const searchStore = useSearchStore()
+  // searchStore 初始化但在此函数中未直接使用
+  // 在 useAppHotkeys 中被使用
+  useSearchStore()
   const isSearchOpen = ref(false)
   const searchInputRef = ref<HTMLInputElement | null>(null)
 

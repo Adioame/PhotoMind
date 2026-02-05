@@ -9,7 +9,7 @@
 import { getEmbeddingService } from './embeddingService.js'
 import { PhotoDatabase } from '../database/db.js'
 
-interface VectorTask {
+export interface VectorTask {
   id: string
   photoUuids: string[]
   status: 'pending' | 'processing' | 'completed' | 'failed'

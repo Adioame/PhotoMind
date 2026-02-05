@@ -29,6 +29,7 @@ export interface GlobalSearchResult {
   rank: number
   thumbnailPath?: string
   takenAt?: string
+  highlights?: string[]
 }
 
 export interface GlobalSearchResponse {

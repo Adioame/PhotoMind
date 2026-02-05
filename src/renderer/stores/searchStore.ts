@@ -8,7 +8,7 @@
  * - Party Mode support
  */
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 export type SearchMode = 'keyword' | 'semantic' | 'hybrid'
 

@@ -62,6 +62,7 @@ development_status:
   e-03-1-llm-query-parsing: done
   e-03-2-keyword-search: done
   e-03-3-global-vector-search: done
+  e-03-3-global-vector-search_tests: done
   e-03-4-result-merging: done
   epic-03-retrospective: optional
 
@@ -80,16 +81,23 @@ development_status:
   e-05-3-search-history: done
   epic-05-retrospective: optional
 
+  # Epic E-06: 相册增强功能
+  epic-06: done
+  e-06-3-1-cover-setting: done
+  e-06-3-2-album-share: done
+  epic-06-retrospective: done
+
 # Summary Statistics
 summary:
-  total_epics: 5
-  total_stories: 20
-  epics_done: 5  # All Epics Complete!
+  total_epics: 6
+  total_stories: 23
+  epics_done: 6
   epics_in_progress: 0
   epics_backlog: 0
-  stories_done: 20  # All stories complete!
+  stories_done: 23
   stories_in_progress: 0
   stories_ready_for_dev: 0
+  stories_in_review: 0
   stories_backlog: 0
 
 # Dependency Graph:

@@ -49,7 +49,7 @@ export const useImportStore = defineStore('import', {
       return state.progress?.failed || 0
     },
 
-    formattedTimeRemaining: (): string => {
+    formattedTimeRemaining: (state): string => {
       if (!state.progress?.estimatedTimeRemaining) return ''
       const seconds = state.progress.estimatedTimeRemaining
       if (seconds < 60) {
@@ -65,7 +65,7 @@ export const useImportStore = defineStore('import', {
       }
     },
 
-    currentStageLabel: (): string => {
+    currentStageLabel: (state): string => {
       const stageLabels: Record<ImportStage, string> = {
         'scanning': '扫描文件',
         'preparing': '准备导入',
