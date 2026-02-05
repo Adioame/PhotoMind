@@ -1,0 +1,322 @@
+/**
+ * PhotoMind - 人物管理服务
+ *
+ * 功能：
+ * 1. 人物 CRUD 操作
+ * 2. 照片人物标记/取消标记
+ * 3. 人物照片查询
+ */
+import { PhotoDatabase } from '../database/db.js'
+
+export interface Person {
+  id: number
+  name: string
+  displayName: string
+  faceCount: number
+  createdAt: string
+  isManual: boolean
+}
+
+export interface PersonTag {
+  id: number
+  photoId: number
+  personId: number
+  personName: string
+  boundingBox?: BoundingBox
+  confidence: number
+  isManual: boolean
+}
+
+export interface BoundingBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface AddPersonParams {
+  name: string
+  displayName?: string
+}
+
+export interface TagPersonParams {
+  photoId: number
+  personId: number
+  boundingBox?: BoundingBox
+}
+
+export class PersonService {
+  private database: PhotoDatabase
+
+  constructor(database?: PhotoDatabase) {
+    this.database = database || new PhotoDatabase()
+  }
+
+  /**
+   * 获取所有人物
+   */
+  getAllPersons(): Person[] {
+    const persons = this.database.getAllPersons()
+    return persons.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      displayName: p.display_name || p.name,
+      faceCount: p.face_count || 0,
+      createdAt: p.created_at,
+      isManual: !!p.is_manual
+    }))
+  }
+
+  /**
+   * 根据 ID 获取人物
+   */
+  getPersonById(id: number): Person | null {
+    const person = this.database.getPersonById(id)
+    if (!person) return null
+
+    return {
+      id: person.id,
+      name: person.name,
+      displayName: person.display_name || person.name,
+      faceCount: person.face_count || 0,
+      createdAt: person.created_at,
+      isManual: !!person.is_manual
+    }
+  }
+
+  /**
+   * 添加新人物
+   */
+  addPerson(params: AddPersonParams): { success: boolean; personId?: number; error?: string } {
+    try {
+      // 检查是否已存在（不区分大小写）
+      const existing = this.searchPersons(params.name)
+      const normalizedName = params.name.toLowerCase().trim()
+      const found = existing.find(p => p.name.toLowerCase() === normalizedName)
+
+      if (found) {
+        return {
+          success: false,
+          error: `人物 "${params.name}" 已存在`
+        }
+      }
+
+      const personId = this.database.addPerson({
+        name: params.name,
+        displayName: params.displayName || params.name
+      })
+
+      console.log(`[PersonService] 添加新人物: ${params.name} (ID: ${personId})`)
+      return { success: true, personId }
+    } catch (error) {
+      console.error('[PersonService] 添加人物失败:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '未知错误'
+      }
+    }
+  }
+
+  /**
+   * 更新人物信息
+   */
+  updatePerson(id: number, params: Partial<AddPersonParams>): boolean {
+    return this.database.updatePerson(id, {
+      name: params.name,
+      displayName: params.displayName
+    })
+  }
+
+  /**
+   * 删除人物
+   */
+  deletePerson(id: number): boolean {
+    try {
+      this.database.run('DELETE FROM faces WHERE person_id = ?', [id])
+      this.database.run('DELETE FROM persons WHERE id = ?', [id])
+      console.log(`[PersonService] 删除人物 ID: ${id}`)
+      return true
+    } catch (error) {
+      console.error('[PersonService] 删除人物失败:', error)
+      return false
+    }
+  }
+
+  /**
+   * 搜索人物
+   */
+  searchPersons(query: string): Person[] {
+    const results = this.database.searchPersons(query)
+    return results.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      displayName: p.display_name || p.name,
+      faceCount: p.face_count || 0,
+      createdAt: p.created_at,
+      isManual: !!p.is_manual
+    }))
+  }
+
+  /**
+   * 为照片标记人物
+   */
+  tagPerson(params: TagPersonParams): { success: boolean; tagId?: number; error?: string } {
+    try {
+      // 验证照片存在
+      const photo = this.database.getPhotoById(params.photoId)
+      if (!photo) {
+        return { success: false, error: '照片不存在' }
+      }
+
+      // 验证人物存在
+      const person = this.database.getPersonById(params.personId)
+      if (!person) {
+        return { success: false, error: '人物不存在' }
+      }
+
+      // 检查是否已标记
+      const existingTags = this.database.getFacesByPhoto(params.photoId)
+      const alreadyTagged = existingTags.some((f: any) => f.person_id === params.personId)
+      if (alreadyTagged) {
+        return { success: false, error: '该照片已标记此人物' }
+      }
+
+      // 添加标签
+      const tagId = this.database.addFace({
+        photoId: params.photoId,
+        personId: params.personId,
+        boundingBox: params.boundingBox,
+        confidence: 1.0,
+        is_manual: 1  // 手动标记
+      })
+
+      // 更新人物 face_count
+      this.updatePersonFaceCount(params.personId)
+
+      console.log(`[PersonService] 为照片 ${params.photoId} 标记人物: ${person.name}`)
+      return { success: true, tagId }
+    } catch (error) {
+      console.error('[PersonService] 标记人物失败:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '未知错误'
+      }
+    }
+  }
+
+  /**
+   * 移除照片的人物标签
+   */
+  untagPerson(photoId: number, personId: number): boolean {
+    try {
+      this.database.run(
+        'DELETE FROM faces WHERE photo_id = ? AND person_id = ?',
+        [photoId, personId]
+      )
+      this.updatePersonFaceCount(personId)
+      console.log(`[PersonService] 移除照片 ${photoId} 的人物标签`)
+      return true
+    } catch (error) {
+      console.error('[PersonService] 移除标签失败:', error)
+      return false
+    }
+  }
+
+  /**
+   * 获取照片的所有人物标签
+   */
+  getPhotoTags(photoId: number): PersonTag[] {
+    const faces = this.database.getFacesByPhoto(photoId)
+    return faces.map((f: any) => ({
+      id: f.id,
+      photoId: f.photo_id,
+      personId: f.person_id,
+      personName: f.person_name || '未知',
+      boundingBox: f.bounding_box ? JSON.parse(f.bounding_box) : undefined,
+      confidence: f.confidence || 0,
+      isManual: !!f.is_manual
+    }))
+  }
+
+  /**
+   * 获取某人物的所有照片
+   */
+  getPersonPhotos(personId: number): any[] {
+    return this.database.getPhotosByPerson(personId)
+  }
+
+  /**
+   * 根据人物名称搜索照片
+   */
+  searchPhotosByPerson(personName: string): any[] {
+    return this.database.searchPhotosByPerson(personName)
+  }
+
+  /**
+   * 更新人物 face_count
+   */
+  private updatePersonFaceCount(personId: number): void {
+    const photos = this.database.getPhotosByPerson(personId)
+    this.database.run(
+      'UPDATE persons SET face_count = ? WHERE id = ?',
+      [photos.length, personId]
+    )
+  }
+
+  /**
+   * 获取人物统计
+   */
+  getStats(): { totalPersons: number; totalTags: number } {
+    const persons = this.getAllPersons()
+    const totalTags = persons.reduce((sum, p) => sum + p.faceCount, 0)
+    return {
+      totalPersons: persons.length,
+      totalTags
+    }
+  }
+
+  /**
+   * 批量标记人物
+   */
+  tagPersons(photoId: number, personIds: number[]): { success: boolean; tagged: number; errors: string[] } {
+    let tagged = 0
+    const errors: string[] = []
+
+    for (const personId of personIds) {
+      const result = this.tagPerson({ photoId, personId })
+      if (result.success) {
+        tagged++
+      } else if (result.error) {
+        errors.push(result.error)
+      }
+    }
+
+    return { success: errors.length === 0, tagged, errors }
+  }
+
+  /**
+   * 移除照片的所有人物标签
+   */
+  untagAllPersons(photoId: number): boolean {
+    try {
+      // 获取所有标签以更新对应的 person face_count
+      const tags = this.getPhotoTags(photoId)
+      const personIds = [...new Set(tags.map(t => t.personId))]
+
+      this.database.run('DELETE FROM faces WHERE photo_id = ?', [photoId])
+
+      // 更新每个相关人物的 face_count
+      for (const personId of personIds) {
+        this.updatePersonFaceCount(personId)
+      }
+
+      console.log(`[PersonService] 移除照片 ${photoId} 的所有人物标签`)
+      return true
+    } catch (error) {
+      console.error('[PersonService] 移除所有标签失败:', error)
+      return false
+    }
+  }
+}
+
+export const personService = new PersonService()

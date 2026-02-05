@@ -1,0 +1,105 @@
+# generated: 2026-02-05
+# project: PhotoMind
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: "/Users/mac/PhotoMind/_bmad-output/implementation-artifacts"
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-02-05
+project: PhotoMind
+project_key: NOKEY
+tracking_system: file-system
+story_location: "/Users/mac/PhotoMind/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic E-01: 数据导入层
+  epic-01: done
+  e-01-1-local-folder-import: done
+  e-01-2-icloud-connection: done
+  e-01-3-metadata-extraction: done
+  e-01-4-import-progress: done
+  epic-01-retrospective: optional
+
+  # Epic E-02: CLIP 语义搜索
+  epic-02: done
+  e-02-1-clip-model-integration: done
+  e-02-2-image-vector-generation: done
+  e-02-3-text-vector-generation: done
+  e-02-4-vector-similarity-search: done
+  e-02-5-incremental-vector-generation: done
+  epic-02-retrospective: optional
+
+  # Epic E-03: 混合搜索服务
+  epic-03: done
+  e-03-1-llm-query-parsing: done
+  e-03-2-keyword-search: done
+  e-03-3-global-vector-search: done
+  e-03-4-result-merging: done
+  epic-03-retrospective: optional
+
+  # Epic E-04: 人物管理系统
+  epic-04: done
+  e-04-1-manual-person-tagging: done
+  e-04-2-face-detection: done
+  e-04-3-face-matching: done
+  e-04-4-person-search: done
+  epic-04-retrospective: optional
+
+  # Epic E-05: 用户界面增强
+  epic-05: done
+  e-05-1-search-interface: done
+  e-05-2-search-results: done
+  e-05-3-search-history: done
+  epic-05-retrospective: optional
+
+# Summary Statistics
+summary:
+  total_epics: 5
+  total_stories: 20
+  epics_done: 5  # All Epics Complete!
+  epics_in_progress: 0
+  epics_backlog: 0
+  stories_done: 20  # All stories complete!
+  stories_in_progress: 0
+  stories_ready_for_dev: 0
+  stories_backlog: 0
+
+# Dependency Graph:
+# ==============
+# E-01 (数据导入) - 基础层，先完成
+#   ↓
+# E-02 (CLIP 语义搜索) - 需要照片数据
+#   ↓
+# E-03 (混合搜索) - 需要 E-02 向量能力
+#   ↓
+# E-04 (人物管理) - 可独立，与搜索集成
+#   ↓
+# E-05 (UI 增强) - 可在任何阶段进行

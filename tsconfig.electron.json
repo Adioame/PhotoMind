@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "outDir": "./dist-electron",
+    "rootDir": "electron",
+    "declaration": false,
+    "noImplicitAny": false,
+    "removeComments": true,
+    "sourceMap": true
+  },
+  "include": ["electron/**/*"],
+  "exclude": ["node_modules"]
+}
