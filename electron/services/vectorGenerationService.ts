@@ -1,14 +1,16 @@
 /**
- * PhotoMind - 向量生成服务
+ * PhotoMind - 向量生成服务（混合架构版本）
  *
  * 功能：
  * 1. 批量生成照片的语义向量
  * 2. 增量更新（只生成新照片的向量）
  * 3. 进度追踪和取消支持
+ * 4. 主进程调度 + 渲染进程执行
  */
-import { getEmbeddingService } from './embeddingService.js'
+import { getEmbeddingService } from './hybridEmbeddingService.js'
 import { PhotoDatabase } from '../database/db.js'
-import type { BatchEmbeddingProgress, EmbeddingResult } from '../types/embedding.js'
+import type { BatchEmbeddingProgress } from '../types/embedding.js'
+import { BrowserWindow } from 'electron'
 
 interface GenerationOptions {
   batchSize?: number
@@ -43,7 +45,6 @@ export class VectorGenerationService {
     this.isGenerating = true
     this.abortController = new AbortController()
 
-    const embeddingService = getEmbeddingService()
     const { batchSize = 50, onProgress } = options
 
     let success = 0
@@ -53,12 +54,6 @@ export class VectorGenerationService {
     const errors: Array<{ photoUuid: string; error: string }> = []
 
     try {
-      // 确保模型已加载
-      if (!embeddingService.isLoaded) {
-        console.log('[VectorGeneration] 加载 CLIP 模型...')
-        await embeddingService.initialize()
-      }
-
       // 获取没有向量的照片
       const photos = this.database.getPhotosWithoutEmbeddings(10000)
       total = photos.length
@@ -67,12 +62,11 @@ export class VectorGenerationService {
 
       if (total === 0) {
         console.log('[VectorGeneration] 所有照片已有向量，无需生成')
-        return { success: 0, failed, total, errors: [], cancelled: false }
+        return { success: 0, failed, total, errors, cancelled: false }
       }
 
       // 分批处理
       for (let i = 0; i < total; i += batchSize) {
-        // 检查是否已取消
         if (this.abortController?.signal.aborted) {
           console.log('[VectorGeneration] 生成任务已取消')
           break
@@ -86,17 +80,18 @@ export class VectorGenerationService {
           }
 
           try {
-            // 再次检查是否已有向量（可能在批次之间生成）
+            // 再次检查是否已有向量
             const hasEmbedding = await this.database.hasEmbedding(photo.uuid, 'image')
             if (hasEmbedding) {
               processed++
               continue
             }
 
-            const result = await embeddingService.imageToEmbedding(photo.file_path)
+            // 通过渲染进程生成向量
+            const result = await this.callRendererEmbedding(photo.file_path)
 
             if (result.success && result.vector) {
-              await this.database.saveEmbedding(photo.uuid, result.vector, 'image')
+              await this.database.saveEmbedding(photo.uuid, result.vector.values, 'image')
               success++
             } else {
               failed++
@@ -115,7 +110,6 @@ export class VectorGenerationService {
 
           processed++
 
-          // 发送进度更新
           const progress: BatchEmbeddingProgress = {
             total,
             processed,
@@ -145,15 +139,50 @@ export class VectorGenerationService {
   }
 
   /**
+   * 通过渲染进程生成向量
+   */
+  private async callRendererEmbedding(imagePath: string): Promise<any> {
+    const windows = BrowserWindow.getAllWindows()
+
+    if (windows.length === 0) {
+      return { success: false, error: 'No renderer window available' }
+    }
+
+    try {
+      // 使用 Promise.race 实现超时控制
+      const timeoutMs = 60000 // 60秒超时
+
+      const executePromise = windows[0].webContents.executeJavaScript(`
+        (async () => {
+          try {
+            if (window.embeddingAPI && window.embeddingAPI.imageToEmbedding) {
+              const result = await window.embeddingAPI.imageToEmbedding(\`${imagePath.replace(/`/g, '\\`')}\`)
+              return JSON.stringify(result)
+            } else {
+              return JSON.stringify({success: false, error: 'Embedding API not available', processingTimeMs: 0})
+            }
+          } catch (err) {
+            return JSON.stringify({success: false, error: err.message || String(err), processingTimeMs: 0})
+          }
+        })()
+      `)
+
+      const timeoutPromise = new Promise<string>((_, reject) => {
+        setTimeout(() => reject(new Error('Embedding timeout after 60s')), timeoutMs)
+      })
+
+      const result = await Promise.race([executePromise, timeoutPromise])
+      return JSON.parse(result)
+    } catch (error) {
+      console.error('[VectorGeneration] 调用渲染进程失败:', error)
+      return { success: false, error: String(error) }
+    }
+  }
+
+  /**
    * 生成单张照片的向量
    */
   async generateOne(photoUuid: string): Promise<boolean> {
-    const embeddingService = getEmbeddingService()
-
-    if (!embeddingService.isLoaded) {
-      await embeddingService.initialize()
-    }
-
     const photo = this.database.getPhotoByUuid(photoUuid)
     if (!photo) {
       throw new Error(`照片不存在: ${photoUuid}`)
@@ -166,10 +195,10 @@ export class VectorGenerationService {
       return true
     }
 
-    const result = await embeddingService.imageToEmbedding(photo.file_path)
+    const result = await this.callRendererEmbedding(photo.file_path)
 
     if (result.success && result.vector) {
-      await this.database.saveEmbedding(photoUuid, result.vector, 'image')
+      await this.database.saveEmbedding(photoUuid, result.vector.values, 'image')
       console.log(`[VectorGeneration] 成功生成向量: ${photoUuid}`)
       return true
     }
@@ -191,7 +220,6 @@ export class VectorGenerationService {
     this.isGenerating = true
     this.abortController = new AbortController()
 
-    const embeddingService = getEmbeddingService()
     const { batchSize = 10, onProgress } = options
 
     let success = 0
@@ -201,10 +229,6 @@ export class VectorGenerationService {
     let processed = 0
 
     try {
-      if (!embeddingService.isLoaded) {
-        await embeddingService.initialize()
-      }
-
       for (const photoUuid of photoUuids) {
         if (this.abortController?.signal.aborted) {
           break
@@ -218,10 +242,10 @@ export class VectorGenerationService {
             continue
           }
 
-          const result = await embeddingService.imageToEmbedding(photo.file_path)
+          const result = await this.callRendererEmbedding(photo.file_path)
 
           if (result.success && result.vector) {
-            await this.database.saveEmbedding(photoUuid, result.vector, 'image')
+            await this.database.saveEmbedding(photoUuid, result.vector.values, 'image')
             success++
           } else {
             failed++

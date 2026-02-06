@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useSearchStore } from '@/stores/searchStore'
+import { toLocalResourceProtocol } from '@/utils/localResource'
 
 // Props
 interface Props {
@@ -37,6 +38,15 @@ const isLoading = computed(() => isSearching.value && results.value.length === 0
 // Methods
 const handlePhotoClick = (photo: any) => {
   emit('photoClick', photo)
+}
+
+// 获取照片 URL，处理本地文件（包含中文等特殊字符）
+const getPhotoUrl = (item: any) => {
+  const path = item.thumbnailPath || item.thumbnail_url || item.filePath
+  if (path && (path.startsWith('/') || /^[a-z]:/i.test(path))) {
+    return toLocalResourceProtocol(path)
+  }
+  return path || ''
 }
 
 const handleScroll = (event: Event) => {
@@ -150,7 +160,7 @@ onUnmounted(() => {
         <div class="photo-thumbnail">
           <img
             v-if="item.thumbnailPath || item.filePath"
-            :src="item.thumbnailPath || `file://${item.filePath}`"
+            :src="getPhotoUrl(item)"
             :alt="item.fileName"
             loading="lazy"
           />

@@ -11,7 +11,8 @@ const mockPhotoAPI = {
     getAll: vi.fn(),
     search: vi.fn(),
     add: vi.fn(),
-    searchPhotos: vi.fn()
+    getPhotos: vi.fn(),
+    getById: vi.fn()
   }
 }
 
@@ -141,14 +142,14 @@ describe('PeopleStore', () => {
       const mockPhotos: Photo[] = [
         { id: 1, uuid: 'uuid-1', file_name: 'photo1.jpg', taken_at: '2024-01-01' }
       ]
-      mockPhotoAPI.people.searchPhotos.mockResolvedValue({ results: mockPhotos })
+      mockPhotoAPI.people.getPhotos.mockResolvedValue({ photos: mockPhotos })
 
       const store = usePeopleStore()
       const person: Person = { id: 1, name: 'John', face_count: 10 }
       await store.selectPerson(person)
 
       expect(store.selectedPerson).toEqual(person)
-      expect(mockPhotoAPI.people.searchPhotos).toHaveBeenCalledWith('John')
+      expect(mockPhotoAPI.people.getPhotos).toHaveBeenCalledWith({ personId: 1 })
     })
   })
 
@@ -158,9 +159,10 @@ describe('PeopleStore', () => {
         { id: 1, uuid: 'uuid-1', file_name: 'photo1.jpg', taken_at: '2024-01-01' },
         { id: 2, uuid: 'uuid-2', file_name: 'photo2.jpg', taken_at: '2024-01-02' }
       ]
-      mockPhotoAPI.people.searchPhotos.mockResolvedValue({ results: mockPhotos })
+      mockPhotoAPI.people.getPhotos.mockResolvedValue({ photos: mockPhotos })
 
       const store = usePeopleStore()
+      store.selectedPerson = { id: 1, name: 'John', face_count: 10 }
       await store.loadPersonPhotos('John')
 
       expect(store.personPhotos).toEqual(mockPhotos)
@@ -168,7 +170,7 @@ describe('PeopleStore', () => {
     })
 
     it('should handle errors gracefully', async () => {
-      mockPhotoAPI.people.searchPhotos.mockRejectedValue(new Error('Load failed'))
+      mockPhotoAPI.people.getPhotos.mockRejectedValue(new Error('Load failed'))
 
       const store = usePeopleStore()
       await store.loadPersonPhotos('John')
@@ -178,7 +180,7 @@ describe('PeopleStore', () => {
     })
 
     it('should handle null response', async () => {
-      mockPhotoAPI.people.searchPhotos.mockResolvedValue(null)
+      mockPhotoAPI.people.getPhotos.mockResolvedValue(null)
 
       const store = usePeopleStore()
       await store.loadPersonPhotos('John')
@@ -216,14 +218,63 @@ describe('PeopleStore', () => {
       const mockPhotos: Photo[] = [
         { id: 1, uuid: 'uuid-1', file_name: 'photo1.jpg', taken_at: '2024-01-01' }
       ]
-      mockPhotoAPI.people.searchPhotos.mockResolvedValue({ results: mockPhotos })
+      mockPhotoAPI.people.getPhotos.mockResolvedValue({ photos: mockPhotos })
 
       const store = usePeopleStore()
+      store.selectedPerson = { id: 1, name: 'John', face_count: 10 }
       await store.loadPersonPhotos('John')
       store.clearSelection()
 
       expect(store.personPhotos).toEqual([])
       expect(store.loading).toBe(false)
+    })
+  })
+
+  describe('Navigation State', () => {
+    it('should track last visited person', () => {
+      const store = usePeopleStore()
+
+      expect(store.lastVisitedPersonId).toBeNull()
+
+      store.setLastVisitedPerson(123)
+      expect(store.lastVisitedPersonId).toBe(123)
+
+      store.setLastVisitedPerson(null)
+      expect(store.lastVisitedPersonId).toBeNull()
+    })
+
+    it('should get person by id from cache', async () => {
+      const mockPeople: Person[] = [
+        { id: 1, name: 'John', face_count: 10 },
+        { id: 2, name: 'Jane', face_count: 8 }
+      ]
+      mockPhotoAPI.people.getAll.mockResolvedValue(mockPeople)
+
+      const store = usePeopleStore()
+      await store.fetchPeople()
+
+      const person = await store.getPersonById(1)
+      expect(person).toEqual(mockPeople[0])
+    })
+
+    it('should get person by id from API when not cached', async () => {
+      const mockPerson: Person = { id: 3, name: 'Bob', face_count: 5 }
+      mockPhotoAPI.people.getById.mockResolvedValue(mockPerson)
+
+      const store = usePeopleStore()
+      const person = await store.getPersonById(3)
+
+      expect(person).toEqual(mockPerson)
+      expect(mockPhotoAPI.people.getById).toHaveBeenCalledWith(3)
+    })
+
+    it('should handle getPersonById error', async () => {
+      mockPhotoAPI.people.getById.mockRejectedValue(new Error('Not found'))
+
+      const store = usePeopleStore()
+      const person = await store.getPersonById(999)
+
+      expect(person).toBeNull()
     })
   })
 })

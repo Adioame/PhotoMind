@@ -53,18 +53,43 @@ export interface MatchingOptions {
 function blobToArray(blob: any): number[] | null {
   if (!blob) return null
   try {
-    // Blob 可能是 Buffer 或 ArrayBuffer
+    // 🚨 添加调试日志
+    console.log('[blobToArray] 输入类型:', typeof blob, '构造函数:', blob?.constructor?.name, '长度:', blob?.length)
+
+    // 处理 SQL.js 返回的 Uint8Array
+    if (blob instanceof Uint8Array) {
+      console.log('[blobToArray] 检测到 Uint8Array')
+      return Array.from(new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4))
+    }
+
+    // 处理 Buffer
     if (typeof blob === 'object' && blob.constructor === Buffer) {
+      console.log('[blobToArray] 检测到 Buffer')
       return Array.from(new Float32Array(blob))
-    } else if (blob instanceof ArrayBuffer) {
+    }
+
+    // 处理 ArrayBuffer
+    if (blob instanceof ArrayBuffer) {
+      console.log('[blobToArray] 检测到 ArrayBuffer')
       return Array.from(new Float32Array(blob))
-    } else if (ArrayBuffer.isView(blob)) {
-      return Array.from(new Float32Array(blob.buffer))
-    } else if (blob instanceof Uint8Array) {
+    }
+
+    // 处理 ArrayBufferView
+    if (ArrayBuffer.isView(blob)) {
+      console.log('[blobToArray] 检测到 ArrayBufferView')
       return Array.from(new Float32Array(blob.buffer))
     }
+
+    // 如果是普通数组，直接返回
+    if (Array.isArray(blob)) {
+      console.log('[blobToArray] 检测到普通数组')
+      return blob
+    }
+
+    console.log('[blobToArray] 无法识别的类型，返回 null')
     return null
   } catch (e) {
+    console.error('[blobToArray] 转换失败:', e)
     return null
   }
 }
@@ -77,7 +102,7 @@ export class FaceMatchingService {
   }
 
   /**
-   * 获取所有人脸描述符（从 detected_faces 表获取嵌入向量）
+   * 获取所有人脸描述符（从 detected_faces 表获取 128维 face_embedding）
    */
   async getAllFaceDescriptors(): Promise<FaceDescriptor[]> {
     const descriptors: FaceDescriptor[] = []
@@ -90,13 +115,17 @@ export class FaceMatchingService {
     `)
 
     for (const row of detectedFaces) {
-      const embedding = blobToArray(row.embedding)
+      // 优先使用 face_embedding (128维)，如果不存在则回退到 embedding (兼容旧数据)
+      let faceEmbedding = blobToArray(row.face_embedding)
+      if (!faceEmbedding || faceEmbedding.length === 0) {
+        faceEmbedding = blobToArray(row.embedding)
+      }
 
       descriptors.push({
         faceId: row.id,
         photoId: row.photo_id,
         personId: row.person_id,
-        descriptor: embedding || [],
+        descriptor: faceEmbedding || [],
         boundingBox: {
           x: row.bbox_x,
           y: row.bbox_y,
@@ -119,18 +148,22 @@ export class FaceMatchingService {
       SELECT df.*, p.id as person_id
       FROM detected_faces df
       LEFT JOIN persons p ON df.person_id = p.id
-      WHERE df.person_id IS NULL OR df.is_manual = 1
+      WHERE df.person_id IS NULL
       ORDER BY df.confidence DESC
     `)
 
     return detectedFaces.map((row: any) => {
-      const embedding = blobToArray(row.embedding)
+      // 优先使用 face_embedding (128维)，如果不存在则回退到 embedding
+      let faceEmbedding = blobToArray(row.face_embedding)
+      if (!faceEmbedding || faceEmbedding.length === 0) {
+        faceEmbedding = blobToArray(row.embedding)
+      }
 
       return {
         faceId: row.id,
         photoId: row.photo_id,
         personId: row.person_id,
-        descriptor: embedding || [],
+        descriptor: faceEmbedding || [],
         boundingBox: {
           x: row.bbox_x,
           y: row.bbox_y,
@@ -176,7 +209,7 @@ export class FaceMatchingService {
     faceId: string | number,
     options: MatchingOptions = {}
   ): Promise<Array<{ faceId: string | number; similarity: number; photoId: number }>> {
-    const { minSimilarity = 0.5, threshold = 0.6 } = options
+    const { minSimilarity = 0.4, threshold = 0.45 } = options
 
     const targetFace = await this.getFaceById(faceId)
     if (!targetFace || !targetFace.descriptor || targetFace.descriptor.length === 0) {
@@ -211,28 +244,146 @@ export class FaceMatchingService {
   }
 
   /**
-   * 自动匹配所有人脸（聚类算法）
+   * 计算人物中心点（centroid）
+   */
+  calculatePersonCentroid(personId: number): number[] | null {
+    const faces = this.database.query(`
+      SELECT face_embedding, embedding
+      FROM detected_faces
+      WHERE person_id = ? AND (face_embedding IS NOT NULL OR embedding IS NOT NULL)
+    `, [personId])
+
+    if (faces.length === 0) return null
+
+    const vectors: number[][] = []
+    for (const face of faces) {
+      let vec = blobToArray(face.face_embedding)
+      if (!vec || vec.length === 0) {
+        vec = blobToArray(face.embedding)
+      }
+      if (vec && vec.length > 0) {
+        vectors.push(vec)
+      }
+    }
+
+    if (vectors.length === 0) return null
+
+    // 计算平均值
+    const dimension = vectors[0].length
+    const centroid = new Array(dimension).fill(0)
+
+    for (const vec of vectors) {
+      for (let i = 0; i < dimension; i++) {
+        centroid[i] += vec[i]
+      }
+    }
+
+    for (let i = 0; i < dimension; i++) {
+      centroid[i] /= vectors.length
+    }
+
+    return centroid
+  }
+
+  /**
+   * 获取所有已命名人物及其中心点
+   */
+  getNamedPersonsWithCentroids(): Array<{ id: number; name: string; centroid: number[] }> {
+    const persons = this.database.query(`
+      SELECT id, name FROM persons WHERE name IS NOT NULL AND name != ''
+    `)
+
+    const result: Array<{ id: number; name: string; centroid: number[] }> = []
+
+    for (const person of persons) {
+      const centroid = this.calculatePersonCentroid(person.id)
+      if (centroid) {
+        result.push({ id: person.id, name: person.name, centroid })
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * 查找最相似的已命名人物
+   */
+  findBestMatchingPerson(
+    faceDescriptor: number[],
+    namedPersons: Array<{ id: number; name: string; centroid: number[] }>,
+    threshold: number
+  ): { id: number; name: string; similarity: number } | null {
+    let bestMatch: { id: number; name: string; similarity: number } | null = null
+    let bestSimilarity = threshold
+
+    for (const person of namedPersons) {
+      const similarity = this.calculateSimilarity(faceDescriptor, person.centroid)
+      if (similarity > bestSimilarity) {
+        bestSimilarity = similarity
+        bestMatch = { id: person.id, name: person.name, similarity }
+      }
+    }
+
+    return bestMatch
+  }
+
+  /**
+   * 分批处理辅助函数 - 避免阻塞事件循环
+   */
+  private async processInBatches<T, R>(
+    items: T[],
+    batchSize: number,
+    processor: (item: T, index: number) => Promise<R>,
+    onProgress?: (current: number, total: number) => void
+  ): Promise<R[]> {
+    const results: R[] = []
+    const total = items.length
+
+    for (let i = 0; i < total; i += batchSize) {
+      const batch = items.slice(i, i + batchSize)
+      const batchResults = await Promise.all(
+        batch.map((item, idx) => processor(item, i + idx))
+      )
+      results.push(...batchResults)
+
+      onProgress?.(Math.min(i + batchSize, total), total)
+
+      // 🚨 每批处理后让出事件循环，避免阻塞
+      if (i + batchSize < total) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * 自动匹配所有人脸（锚点匹配算法）
+   * 1. 优先匹配到已命名人物
+   * 2. 未匹配的创建为 Pending Person
    */
   async autoMatch(options: MatchingOptions = {}): Promise<{
     matched: number
     clusters: PersonCluster[]
     processingTimeMs: number
     warning?: string
+    personsCreated?: number
+    message?: string
   }> {
     const startTime = Date.now()
     const {
-      threshold = 0.6,
+      threshold = 0.45,  // 🚨 降低到 0.45，提高匹配率
       maxClusterSize = 100,
       onProgress
     } = options
 
-    console.log('[FaceMatching] 开始自动匹配...')
+    console.log('[FaceMatching] 开始自动匹配（锚点匹配算法）...')
 
     const unmatchedFaces = await this.getUnmatchedFaces()
     console.log(`[FaceMatching] 找到 ${unmatchedFaces.length} 张未匹配的人脸`)
 
     if (unmatchedFaces.length === 0) {
-      return { matched: 0, clusters: [], processingTimeMs: Date.now() - startTime }
+      return { matched: 0, clusters: [], processingTimeMs: Date.now() - startTime, message: '没有未匹配的人脸' }
     }
 
     // 过滤出有嵌入向量的人脸
@@ -248,54 +399,128 @@ export class FaceMatchingService {
       }
     }
 
-    // 简单聚类算法（基于相似度的贪心聚类）
+    // 🚨 获取所有已命名人物及其中心点
+    const namedPersons = this.getNamedPersonsWithCentroids()
+    console.log(`[FaceMatching] 已命名人物数量: ${namedPersons.length}`)
+
+    // 🚨 锚点匹配：先尝试匹配到已命名人物
     const clusters: PersonCluster[] = []
     const assigned = new Set<string | number>()
     const total = facesWithEmbeddings.length
 
-    for (let i = 0; i < facesWithEmbeddings.length; i++) {
-      const face = facesWithEmbeddings[i]
-      onProgress?.(i, total)
+    // 🚨 分批处理，每批 50 个，避免阻塞
+    const BATCH_SIZE = 50
 
-      if (assigned.has(face.faceId)) continue
+    for (let i = 0; i < facesWithEmbeddings.length; i += BATCH_SIZE) {
+      const batch = facesWithEmbeddings.slice(i, Math.min(i + BATCH_SIZE, facesWithEmbeddings.length))
 
-      const cluster: PersonCluster = {
-        faces: [face],
-        confidence: face.confidence
-      }
+      for (const face of batch) {
+        onProgress?.(assigned.size, total)
 
-      assigned.add(face.faceId)
+        if (assigned.has(face.faceId)) continue
 
-      // 查找相似人脸
-      for (let j = i + 1; j < facesWithEmbeddings.length; j++) {
-        const otherFace = facesWithEmbeddings[j]
+        // 🚨 第一步：尝试匹配到已命名人物
+        if (namedPersons.length > 0) {
+          const bestMatch = this.findBestMatchingPerson(face.descriptor, namedPersons, threshold)
+          if (bestMatch) {
+            // 匹配到已命名人物，创建单人脸聚类
+            clusters.push({
+              personId: bestMatch.id,
+              faces: [face],
+              confidence: bestMatch.similarity,
+              suggestedName: bestMatch.name
+            })
+            assigned.add(face.faceId)
+            continue
+          }
+        }
 
-        if (assigned.has(otherFace.faceId)) continue
-        if (cluster.faces.length >= maxClusterSize) break
+        // 🚨 第二步：未匹配到已命名人物，进行聚类
+        const cluster: PersonCluster = {
+          faces: [face],
+          confidence: face.confidence
+        }
 
-        const similarity = this.calculateSimilarity(
-          face.descriptor || [],
-          otherFace.descriptor || []
-        )
+        assigned.add(face.faceId)
 
-        if (similarity >= threshold) {
-          cluster.faces.push(otherFace)
-          assigned.add(otherFace.faceId)
-          cluster.confidence = Math.min(cluster.confidence, similarity)
+        // 在当前批次中查找相似人脸
+        for (const otherFace of facesWithEmbeddings) {
+          if (assigned.has(otherFace.faceId)) continue
+          if (cluster.faces.length >= maxClusterSize) break
+
+          const similarity = this.calculateSimilarity(
+            face.descriptor || [],
+            otherFace.descriptor || []
+          )
+
+          if (similarity >= threshold) {
+            cluster.faces.push(otherFace)
+            assigned.add(otherFace.faceId)
+            cluster.confidence = Math.min(cluster.confidence, similarity)
+          }
+        }
+
+        if (cluster.faces.length > 0) {
+          clusters.push(cluster)
         }
       }
 
-      if (cluster.faces.length > 0) {
-        clusters.push(cluster)
+      // 🚨 每批处理后让出事件循环
+      if (i + BATCH_SIZE < facesWithEmbeddings.length) {
+        await new Promise(resolve => setTimeout(resolve, 0))
       }
     }
 
-    console.log(`[FaceMatching] 聚类完成，生成 ${clusters.length} 个聚类`)
+    console.log(`[FaceMatching] 锚点匹配完成，生成 ${clusters.length} 个聚类`)
+
+    // 🚨 分批创建人物，每批 10 个
+    let personsCreated = 0
+    let pendingIndex = 1
+    const PERSON_BATCH_SIZE = 10
+
+    for (let i = 0; i < clusters.length; i += PERSON_BATCH_SIZE) {
+      const batch = clusters.slice(i, i + PERSON_BATCH_SIZE)
+
+      await Promise.all(batch.map(async (cluster) => {
+        // 如果聚类已经有 personId（匹配到已命名人物），跳过
+        if (cluster.personId) {
+          // 将人脸分配给该人物
+          for (const face of cluster.faces) {
+            await this.assignFaceToPerson(face.faceId, cluster.personId)
+          }
+          return
+        }
+
+        // 创建 Pending Person
+        const personName = `未命名 ${pendingIndex++}`
+        try {
+          const result = await this.createPersonFromCluster(cluster, personName)
+          if (result.success && result.personId) {
+            personsCreated++
+            cluster.personId = result.personId
+            cluster.suggestedName = personName
+          }
+        } catch (error) {
+          console.error(`[FaceMatching] 创建人物 "${personName}" 失败:`, error)
+        }
+      }))
+
+      // 让出事件循环
+      if (i + PERSON_BATCH_SIZE < clusters.length) {
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+    }
+
+    if (personsCreated > 0) {
+      console.log(`[FaceMatching] 自动创建了 ${personsCreated} 位未命名人物`)
+    }
 
     return {
       matched: assigned.size,
       clusters,
-      processingTimeMs: Date.now() - startTime
+      processingTimeMs: Date.now() - startTime,
+      personsCreated,
+      message: `匹配完成：${assigned.size}/${facesWithEmbeddings.length} 张人脸已匹配或聚类`
     }
   }
 
@@ -346,13 +571,17 @@ export class FaceMatchingService {
     if (rows.length === 0) return null
 
     const row = rows[0]
-    const embedding = blobToArray(row.embedding)
+    // 优先使用 face_embedding (128维)，如果不存在则回退到 embedding
+    let faceEmbedding = blobToArray(row.face_embedding)
+    if (!faceEmbedding || faceEmbedding.length === 0) {
+      faceEmbedding = blobToArray(row.embedding)
+    }
 
     return {
       faceId: row.id,
       photoId: row.photo_id,
       personId: row.person_id,
-      descriptor: embedding || [],
+      descriptor: faceEmbedding || [],
       boundingBox: {
         x: row.bbox_x,
         y: row.bbox_y,
@@ -437,13 +666,17 @@ export class FaceMatchingService {
     `, [personId])
 
     return detectedFaces.map((row: any) => {
-      const embedding = blobToArray(row.embedding)
+      // 优先使用 face_embedding (128维)，如果不存在则回退到 embedding
+      let faceEmbedding = blobToArray(row.face_embedding)
+      if (!faceEmbedding || faceEmbedding.length === 0) {
+        faceEmbedding = blobToArray(row.embedding)
+      }
 
       return {
         faceId: row.id,
         photoId: row.photo_id,
         personId: row.person_id,
-        descriptor: embedding || [],
+        descriptor: faceEmbedding || [],
         boundingBox: {
           x: row.bbox_x,
           y: row.bbox_y,

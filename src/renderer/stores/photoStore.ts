@@ -21,26 +21,42 @@ export const usePhotoStore = defineStore('photos', () => {
   const hasMore = ref(true)
   const importProgress = ref<ImportProgress | null>(null)
   const isImporting = ref(false)
+  // 进度监听器清理函数
+  let progressCleanup: (() => void) | null = null
 
   // Actions
   async function fetchPhotos(options: { limit?: number; offset?: number } = {}) {
     const limit = options.limit || 24
     const offset = options.offset || 0
 
+    console.log('[photoStore.fetchPhotos] 开始加载 - limit:', limit, 'offset:', offset)
     loading.value = true
     try {
       const result = await (window as any).photoAPI.photos.getList({ limit, offset })
+      console.log('[photoStore.fetchPhotos] API 返回:', result?.length, '张照片')
 
       if (offset === 0) {
         photos.value = result || []
+        console.log('[photoStore.fetchPhotos] 重置 photos:', photos.value.length)
       } else {
         photos.value = [...photos.value, ...(result || [])]
+        console.log('[photoStore.fetchPhotos] 追加后 photos:', photos.value.length)
       }
 
-      totalCount.value = photos.value.length
+      // 获取照片总数（而不是已加载数量）
+      try {
+        const countResult = await (window as any).photoAPI.photos.getCount()
+        totalCount.value = countResult?.total || result?.length || 0
+        console.log('[photoStore.fetchPhotos] totalCount:', totalCount.value)
+      } catch {
+        totalCount.value = photos.value.length
+      }
+
       hasMore.value = result?.length === limit
+
+      console.log('[photoStore.fetchPhotos] 完成 - photos.length:', photos.value.length, 'totalCount:', totalCount.value)
     } catch (error) {
-      console.error('获取照片失败:', error)
+      console.error('[photoStore.fetchPhotos] 获取照片失败:', error)
     } finally {
       loading.value = false
     }
@@ -112,10 +128,24 @@ export const usePhotoStore = defineStore('photos', () => {
     }
 
     try {
-      // 设置进度监听
-      if ((window as any).photoAPI.local.onProgress) {
-        // 注意：前端无法直接监听主进程的 IPC 事件
-        // 这里使用轮询方式获取进度
+      // 设置进度监听器（通过 IPC 事件）
+      if ((window as any).photoAPI.import?.onProgress) {
+        progressCleanup = (window as any).photoAPI.import.onProgress((progress: any) => {
+          importProgress.value = {
+            current: progress.currentIndex || 0,
+            total: progress.total || 100,
+            currentFile: progress.currentFile || '',
+            status: progress.stage === 'complete' ? 'completed' :
+                    progress.stage === 'cancelled' ? 'error' :
+                    (progress.stage === 'scanning' ? 'scanning' : 'importing'),
+            importedCount: progress.imported || 0,
+            errorCount: progress.failed || 0
+          }
+        })
+      }
+
+      // 备用：如果上面的监听器不可用，使用轮询
+      if (!progressCleanup) {
         pollProgress()
       }
 
@@ -147,6 +177,11 @@ export const usePhotoStore = defineStore('photos', () => {
       return false
     } finally {
       isImporting.value = false
+      // 清理监听器
+      if (progressCleanup) {
+        progressCleanup()
+        progressCleanup = null
+      }
     }
   }
 
@@ -182,6 +217,11 @@ export const usePhotoStore = defineStore('photos', () => {
     hasMore.value = true
     importProgress.value = null
     isImporting.value = false
+    // 清理监听器
+    if (progressCleanup) {
+      progressCleanup()
+      progressCleanup = null
+    }
   }
 
   return {

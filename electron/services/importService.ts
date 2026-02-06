@@ -12,6 +12,7 @@ import { folderScanner, ScanOptions, ScannedFile } from './folderScanner.js'
 import { PhotoDatabase } from '../database/db.js'
 import { importProgressService, ImportProgress } from './importProgressService.js'
 import { backgroundVectorService, VectorTask } from './backgroundVectorService.js'
+import { faceDetectionQueue } from './faceDetectionQueue.js'
 import crypto from 'crypto'
 import { promises as fs } from 'fs'
 
@@ -299,6 +300,9 @@ export class ImportService {
         // 添加到向量生成队列（异步，不阻塞）
         backgroundVectorService.addPhoto(photoData.uuid)
 
+        // 添加到人脸检测队列（异步，不阻塞）
+        this.triggerFaceDetection(photoId, photoData.uuid, filePath)
+
         return {
           success: true,
           photoUuid: photoData.uuid,
@@ -340,6 +344,9 @@ export class ImportService {
 
         console.log(`[Import] 已添加 ${photoUuids.length} 张照片到向量生成队列，任务ID: ${taskId}`)
 
+        // 触发人脸检测（异步，不阻塞）
+        await this.triggerFaceDetectionBatch(photoUuids)
+
         return {
           importResult,
           vectorTaskId: taskId
@@ -373,6 +380,57 @@ export class ImportService {
     const stats = backgroundVectorService.getStats()
     return stats.pending
   }
+
+  /**
+   * 触发人脸检测
+   * 异步执行，不阻塞导入流程
+   */
+  private async triggerFaceDetection(photoId: number, photoUuid: string, filePath: string): Promise<void> {
+    try {
+      await faceDetectionQueue.addTask(
+        photoId.toString(),
+        photoUuid,
+        filePath
+      )
+      console.log(`[Import] 已添加到人脸检测队列: ${photoUuid}`)
+    } catch (error) {
+      console.error(`[Import] 人脸检测触发失败: ${photoUuid}`, error)
+      // 不阻塞导入流程
+    }
+  }
+
+  /**
+   * 批量触发人脸检测
+   */
+  private async triggerFaceDetectionBatch(photoUuids: string[]): Promise<void> {
+    if (photoUuids.length === 0) return
+
+    try {
+      // 获取照片信息
+      const photos = this.database.query(
+        `SELECT id, uuid, file_path FROM photos WHERE uuid IN (${photoUuids.map(() => '?').join(',')})`,
+        photoUuids
+      )
+
+      // 批量添加到人脸检测队列
+      for (const photo of photos) {
+        await this.triggerFaceDetection(photo.id, photo.uuid, photo.file_path)
+      }
+
+      console.log(`[Import] 已批量添加 ${photos.length} 张照片到人脸检测队列`)
+    } catch (error) {
+      console.error('[Import] 批量人脸检测触发失败:', error)
+    }
+  }
 }
 
-export const importService = new ImportService(new PhotoDatabase())
+// 导出单例，由 main/index.ts 初始化时传入 database 实例
+export let importService: ImportService | null = null
+
+/**
+ * 初始化导入服务（使用与主进程相同的数据库实例）
+ */
+export function initializeImportService(database: PhotoDatabase): ImportService {
+  importService = new ImportService(database)
+  return importService
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useImportStore, type ImportProgress } from '../stores/importStore'
+import { useImportStore, type ImportProgress } from '@/stores/importStore'
 import { NProgress, NButton, NIcon, NAlert, NSpin } from 'naive-ui'
 
 const props = defineProps<{

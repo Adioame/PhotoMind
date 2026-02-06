@@ -2,16 +2,18 @@
  * PhotoMind - 人脸检测服务
  *
  * 功能：
- * 1. 照片人脸检测
- * 2. 批量检测
- * 3. 进度追踪
- *
- * 注意：此服务使用纯算法检测，实际使用时需要集成
- * face-api.js 或 TensorFlow.js 模型
+ * 1. 照片人脸检测（基于 @vladmandic/face-api）
+ * 2. 128 维人脸特征向量生成
+ * 3. 批量检测与进度追踪
  */
 import { resolve } from 'path'
 import { existsSync } from 'fs'
 import { PhotoDatabase } from '../database/db.js'
+import * as faceapi from '@vladmandic/face-api'
+import * as tf from '@tensorflow/tfjs'
+import '@tensorflow/tfjs-backend-cpu'
+import sharp from 'sharp'
+import { getEmbeddingService } from './hybridEmbeddingService.js'
 
 export interface FaceDetectionResult {
   success: boolean
@@ -24,6 +26,7 @@ export interface FaceInfo {
   box: BoundingBox
   confidence: number
   landmarks?: FaceLandmarks
+  descriptor?: number[]  // 128 维人脸特征向量
 }
 
 export interface BoundingBox {
@@ -72,45 +75,71 @@ export class FaceDetectionService {
   private minConfidence = 0.5
   private maxFaces = 10
 
+  private tfBackendReady = false
+
   constructor(config?: FaceDetectionServiceConfig) {
     this.modelsPath = config?.modelsPath || resolve(process.cwd(), 'models/face-api')
     if (config?.minConfidence) this.minConfidence = config.minConfidence
     if (config?.maxFaces) this.maxFaces = config.maxFaces
   }
 
+  private async ensureTfBackend(): Promise<void> {
+    if (!this.tfBackendReady) {
+      // 强制 CPU 模式，避免 WebGL 兼容性问题
+      await tf.setBackend('cpu')
+      await tf.ready()
+      this.tfBackendReady = true
+      console.log('[FaceDetection] TF.js 后端已设置为 CPU 模式')
+
+      // 清理可能存在的泄露 tensor
+      const numTensors = tf.memory().numTensors
+      if (numTensors > 100) {
+        console.warn(`[FaceDetection] 检测到 ${numTensors} 个未释放的 tensor，执行清理`)
+        tf.disposeVariables()
+      }
+    }
+  }
+
   /**
    * 加载检测模型
    */
   async loadModels(): Promise<{ success: boolean; error?: string }> {
-    try {
-      console.log('[FaceDetection] 检查模型配置...')
+    if (this.isLoaded) {
+      return { success: true }
+    }
 
-      // 检查模型是否存在
-      const modelFiles = [
+    try {
+      // 确保 TensorFlow.js 后端已初始化
+      await this.ensureTfBackend()
+
+      console.log('[FaceDetection] 加载 face-api.js 模型...')
+
+      // 检查模型文件是否存在
+      const requiredModels = [
         'tiny_face_detector_model-weights_manifest.json',
-        'face_landmark_68_model-weights_manifest.json'
+        'face_landmark_68_model-weights_manifest.json',
+        'face_recognition_model-weights_manifest.json'
       ]
 
-      let allModelsExist = true
-      for (const model of modelFiles) {
+      for (const model of requiredModels) {
         const modelPath = resolve(this.modelsPath, model)
         if (!existsSync(modelPath)) {
-          console.warn(`[FaceDetection] 模型文件不存在: ${model}`)
-          allModelsExist = false
+          return { success: false, error: `模型文件不存在: ${model}` }
         }
       }
 
-      if (allModelsExist) {
-        this.isLoaded = true
-        console.log('[FaceDetection] 模型已就绪')
-        return { success: true }
-      }
+      // 并行加载所有模型
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromDisk(this.modelsPath),
+        faceapi.nets.faceLandmark68Net.loadFromDisk(this.modelsPath),
+        faceapi.nets.faceRecognitionNet.loadFromDisk(this.modelsPath)
+      ])
 
-      // 如果模型不存在，返回提示
-      console.log('[FaceDetection] 模型文件不存在，将使用模拟检测')
-      return { success: false, error: '模型文件不存在，请下载 face-api.js 模型文件' }
+      this.isLoaded = true
+      console.log('[FaceDetection] 模型加载成功')
+      return { success: true }
     } catch (error) {
-      console.error('[FaceDetection] 模型检查失败:', error)
+      console.error('[FaceDetection] 模型加载失败:', error)
       return { success: false, error: String(error) }
     }
   }
@@ -128,11 +157,10 @@ export class FaceDetectionService {
 
   /**
    * 检测照片中的人脸
-   * 实际实现需要集成 face-api.js 或 TensorFlow.js
    */
   async detect(imagePath: string, options: DetectionOptions = {}): Promise<FaceDetectionResult> {
     const startTime = Date.now()
-    const { maxResults = this.maxFaces, minConfidence = this.minConfidence } = options
+    const { minConfidence = this.minConfidence } = options
 
     // 检查文件是否存在
     if (!existsSync(imagePath)) {
@@ -145,19 +173,82 @@ export class FaceDetectionService {
     }
 
     try {
-      // 尝试加载模型
-      if (!this.isLoaded) {
-        const loadResult = await this.loadModels()
-        if (!loadResult.success) {
-          // 返回模拟结果用于演示
-          return this.mockDetection(imagePath, startTime, minConfidence)
+      // 确保模型已加载
+      const loadResult = await this.loadModels()
+      if (!loadResult.success) {
+        return {
+          success: false,
+          detections: [],
+          error: `模型加载失败: ${loadResult.error}`,
+          processingTimeMs: Date.now() - startTime
         }
       }
 
-      // 这里需要集成实际的检测库
-      // 目前返回模拟结果
-      console.log(`[FaceDetection] 检测图片: ${imagePath}`)
-      return this.mockDetection(imagePath, startTime, minConfidence)
+      // 加载图片并转换为 tensor
+      const { data, info } = await sharp(imagePath)
+        .raw()
+        .ensureAlpha()
+        .resize(416, 416, { fit: 'inside' })
+        .toBuffer({ resolveWithObject: true })
+
+      const { width, height } = info
+
+      // 去掉 alpha 通道 (RGBA -> RGB)
+      const rgbData = new Uint8Array(width * height * 3)
+      for (let i = 0; i < width * height; i++) {
+        rgbData[i * 3] = data[i * 4]       // R
+        rgbData[i * 3 + 1] = data[i * 4 + 1] // G
+        rgbData[i * 3 + 2] = data[i * 4 + 2] // B
+      }
+
+      const imageTensor = tf.tensor3d(rgbData, [height, width, 3])
+
+      let detections: faceapi.WithFaceDescriptor<faceapi.WithFaceLandmarks<{
+        detection: faceapi.FaceDetection
+      }, faceapi.FaceLandmarks68>>[] = []
+
+      try {
+        // 添加超时控制（45秒）
+        const detectionPromise = faceapi
+          .detectAllFaces(imageTensor, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minConfidence }))
+          .withFaceLandmarks()
+          .withFaceDescriptors()
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('人脸检测超时 (45s)')), 45000)
+        )
+
+        detections = await Promise.race([detectionPromise, timeoutPromise])
+      } finally {
+        // 确保 tensor 被释放
+        imageTensor.dispose()
+      }
+
+      // 转换为内部格式 - 过滤掉没有 descriptor 的人脸
+      const faces: FaceInfo[] = detections
+        .filter(d => d.descriptor && d.descriptor.length === 128)  // 确保有有效的128维特征向量
+        .map(d => ({
+          box: {
+            x: d.detection.box.x,
+            y: d.detection.box.y,
+            width: d.detection.box.width,
+            height: d.detection.box.height
+          },
+          confidence: d.detection.score,
+          landmarks: this.convertLandmarks(d.landmarks),
+          descriptor: Array.from(d.descriptor)  // Float32Array -> number[] (128维)
+        }))
+
+      // 限制最大人脸数
+      const limitedFaces = faces.slice(0, this.maxFaces)
+
+      console.log(`[FaceDetection] 检测到 ${limitedFaces.length} 张人脸: ${imagePath}`)
+
+      return {
+        success: true,
+        detections: limitedFaces,
+        processingTimeMs: Date.now() - startTime
+      }
     } catch (error) {
       console.error('[FaceDetection] 检测失败:', error)
       return {
@@ -170,48 +261,17 @@ export class FaceDetectionService {
   }
 
   /**
-   * 模拟检测（用于演示和测试）
+   * 转换 face-api.js 的 landmarks 到内部格式
    */
-  private mockDetection(imagePath: string, startTime: number, minConfidence: number): FaceDetectionResult {
-    // 随机决定是否检测到人脸
-    const shouldDetect = Math.random() > 0.3
+  private convertLandmarks(landmarks: faceapi.FaceLandmarks68): FaceLandmarks {
+    const positions = landmarks.positions
 
-    if (!shouldDetect) {
-      return {
-        success: true,
-        detections: [],
-        processingTimeMs: Date.now() - startTime
-      }
-    }
-
-    // 生成随机的人脸检测结果
-    const faceCount = Math.floor(Math.random() * 3) + 1 // 1-3 张人脸
-    const detections: FaceInfo[] = []
-
-    for (let i = 0; i < Math.min(faceCount, 3); i++) {
-      detections.push({
-        box: {
-          x: 100 + i * 150,
-          y: 100,
-          width: 120,
-          height: 150
-        },
-        confidence: 0.7 + Math.random() * 0.25,
-        landmarks: {
-          jawOutline: Array.from({ length: 17 }, (_, j) => ({ x: 100 + i * 150 + j * 7, y: 100 + 150 })),
-          nose: [{ x: 160 + i * 150, y: 180 }, { x: 160 + i * 150, y: 210 }],
-          mouth: Array.from({ length: 20 }, (_, j) => ({ x: 120 + i * 150 + j * 3, y: 240 })),
-          leftEye: Array.from({ length: 6 }, (_, j) => ({ x: 130 + i * 150 + j * 4, y: 140 })),
-          rightEye: Array.from({ length: 6 }, (_, j) => ({ x: 170 + i * 150 + j * 4, y: 140 }))
-        }
-      })
-    }
-
-    console.log(`[FaceDetection] 模拟检测到 ${detections.length} 张人脸`)
     return {
-      success: true,
-      detections: detections.filter(d => d.confidence >= minConfidence),
-      processingTimeMs: Date.now() - startTime
+      jawOutline: positions.slice(0, 17).map(p => ({ x: p.x, y: p.y })),
+      nose: positions.slice(27, 36).map(p => ({ x: p.x, y: p.y })),
+      mouth: positions.slice(48, 68).map(p => ({ x: p.x, y: p.y })),
+      leftEye: positions.slice(36, 42).map(p => ({ x: p.x, y: p.y })),
+      rightEye: positions.slice(42, 48).map(p => ({ x: p.x, y: p.y }))
     }
   }
 
@@ -289,30 +349,128 @@ export class FaceDetectionService {
   }
 
   /**
-   * 检测并保存到数据库
+   * 检测并保存到数据库（双向量版本）
+   * 同时生成 128维 face_embedding 和 512维 semantic_embedding
    */
   async detectAndSave(imagePath: string, database: PhotoDatabase): Promise<FaceDetectionResult> {
-    const result = await this.detect(imagePath)
+    const startTime = Date.now()
+
+    // 检查文件是否存在
+    if (!existsSync(imagePath)) {
+      console.warn(`[FaceDetection] 文件不存在，跳过: ${imagePath}`)
+      return {
+        success: false,
+        detections: [],
+        error: '文件不存在',
+        processingTimeMs: Date.now() - startTime
+      }
+    }
+
+    const result = await this.detect(imagePath, {})
 
     if (result.success && result.detections.length > 0) {
       // 获取照片
       const photo = database.getPhotoByFilePath(imagePath)
-      if (photo) {
-        const photoId = (photo as any).id || (photo as any).uuid
 
-        for (const face of result.detections) {
-          try {
-            database.addFace({
-              photoId,
-              boundingBox: face.box,
-              confidence: face.confidence,
-              is_manual: 0  // 自动检测
-            })
-          } catch (e) {
-            // 忽略保存错误
+      if (!photo) {
+        console.warn(`[FaceDetection] 数据库中未找到照片: ${imagePath}`)
+        return result
+      }
+
+      // 安全获取 photoId
+      const photoId = (photo as any).id ?? null
+
+      if (!photoId) {
+        console.warn(`[FaceDetection] 照片缺少 id，跳过: ${imagePath}`)
+        return result
+      }
+
+      // 获取图片尺寸用于坐标转换
+      const imageInfo = await sharp(imagePath).metadata()
+      const imgWidth = imageInfo.width || 1
+      const imgHeight = imageInfo.height || 1
+
+      // 加载 sharp 实例用于裁剪
+      const sharpInstance = sharp(imagePath)
+
+      // 为每个人脸生成双向量
+      const facesToSave: Array<{
+        id: string
+        bbox_x: number
+        bbox_y: number
+        bbox_width: number
+        bbox_height: number
+        confidence: number
+        embedding?: number[]
+        face_embedding?: number[]
+        semantic_embedding?: number[]
+        vector_version?: number
+      }> = []
+      for (let index = 0; index < result.detections.length; index++) {
+        const face = result.detections[index]
+        const faceId = `${photoId}_${index}_${Date.now()}`
+
+        // 转换相对坐标为绝对像素坐标
+        const absX = Math.round((face.box.x / 416) * imgWidth)
+        const absY = Math.round((face.box.y / 416) * imgHeight)
+        const absWidth = Math.round((face.box.width / 416) * imgWidth)
+        const absHeight = Math.round((face.box.height / 416) * imgHeight)
+
+        // 确保坐标在图片范围内
+        const cropX = Math.max(0, absX)
+        const cropY = Math.max(0, absY)
+        const cropWidth = Math.min(absWidth, imgWidth - cropX)
+        const cropHeight = Math.min(absHeight, imgHeight - cropY)
+
+        let semanticEmbedding: number[] | undefined = undefined
+
+        try {
+          // 裁剪人脸区域
+          const faceBuffer = await sharpInstance
+            .clone()
+            .extract({ left: cropX, top: cropY, width: cropWidth, height: cropHeight })
+            .resize(224, 224, { fit: 'cover' })
+            .jpeg({ quality: 90 })
+            .toBuffer()
+
+          // 转换为 base64 传递给 CLIP
+          const faceBase64 = `data:image/jpeg;base64,${faceBuffer.toString('base64')}`
+
+          // 生成 512维语义向量
+          const embeddingService = getEmbeddingService()
+          const clipResult = await embeddingService.imageToEmbedding(faceBase64)
+
+          if (clipResult.success && clipResult.vector) {
+            semanticEmbedding = clipResult.vector.values || (clipResult.vector as any)
+            console.log(`[FaceDetection] 生成 CLIP 向量成功: ${faceId}, 维度: ${semanticEmbedding?.length}`)
+          } else {
+            console.warn(`[FaceDetection] CLIP 向量生成失败: ${faceId}, 错误: ${clipResult.error}`)
           }
+        } catch (clipError) {
+          console.warn(`[FaceDetection] 生成语义向量失败: ${faceId}`, clipError)
+          // 继续保存，semantic_embedding 可以为 null
         }
-        console.log(`[FaceDetection] 保存 ${result.detections.length} 张检测到的人脸`)
+
+        facesToSave.push({
+          id: faceId,
+          bbox_x: face.box.x,
+          bbox_y: face.box.y,
+          bbox_width: face.box.width,
+          bbox_height: face.box.height,
+          confidence: face.confidence,
+          embedding: face.descriptor,  // 128 维 face-api 向量 (兼容旧字段)
+          face_embedding: face.descriptor,  // 128 维 face-api 向量
+          semantic_embedding: semanticEmbedding,  // 512 维 CLIP 向量
+          vector_version: semanticEmbedding ? 2 : 1  // 2=双向量, 1=只有face向量
+        })
+      }
+
+      try {
+        database.saveDetectedFaces(photoId, facesToSave)
+        const withSemantic = facesToSave.filter(f => f.semantic_embedding).length
+        console.log(`[FaceDetection] 保存 ${facesToSave.length} 张人脸: ${withSemantic} 张有语义向量, ${facesToSave.length - withSemantic} 张只有人脸向量`)
+      } catch (e) {
+        console.error(`[FaceDetection] 保存人脸失败: ${imagePath}`, e)
       }
     }
 

@@ -8,6 +8,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { CheckmarkCircle24Regular } from '@vicons/fluent'
 import type { Album, AlbumPhoto } from '@/stores/albumStore'
+import { toLocalResourceProtocol } from '@/utils/localResource'
 
 const props = defineProps<{
   show: boolean
@@ -81,6 +82,15 @@ onMounted(() => {
   selectedPhotoId.value = props.album?.coverPhotoId || null
   localPhotos.value = props.photos || []
 })
+
+// 获取照片 URL，处理本地文件（包含中文等特殊字符）
+const getPhotoUrl = (photo: any) => {
+  const path = photo.thumbnailPath || photo.thumbnail_url || photo.filePath
+  if (path && (path.startsWith('/') || /^[a-z]:/i.test(path))) {
+    return toLocalResourceProtocol(path)
+  }
+  return path || ''
+}
 </script>
 
 <template>
@@ -123,10 +133,10 @@ onMounted(() => {
         >
           <div class="photo-wrapper">
             <n-image
-              :src="photo.thumbnailPath"
+              :src="getPhotoUrl(photo)"
               :alt="photo.fileName"
-              object-fit="cover"
-              style="width: 100%; height: 100%;"
+              object-fit="contain"
+              style="width: 100%; height: 200px;"
               preview-disabled
             />
             <div class="photo-overlay">

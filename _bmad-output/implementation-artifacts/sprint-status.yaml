@@ -87,14 +87,39 @@ development_status:
   e-06-3-2-album-share: done
   epic-06-retrospective: done
 
+  # Epic E-07: 技术债务修复 - 缩略图加载问题
+  epic-07: done
+  e-07-1-thumbnail-load-fix: done
+  epic-07-retrospective: optional
+
+  # Epic E-08: 双向量架构升级
+  epic-08: done
+  e-08-1-dual-vector-infrastructure: done
+  e-08-2-face-embedding-regeneration: done
+  e-08-3-quality-validation: done
+  epic-08-retrospective: optional
+
+  # Epic E-09: UX 导航优化
+  epic-09: done
+  e-09-person-navigation-refactor: done
+  epic-09-retrospective: optional
+
+  # Epic E-10: 人脸扫描状态同步修复 (P0 - 阻塞性问题)
+  epic-10: done
+  e-10-1-global-scan-state-manager: done
+  e-10-2-periodic-state-reconciliation: done
+  e-10-3-scan-job-database-persistence: done
+  e-10-4-intelligent-diagnostics: done
+  epic-10-retrospective: optional
+
 # Summary Statistics
 summary:
-  total_epics: 6
-  total_stories: 23
-  epics_done: 6
+  total_epics: 10
+  total_stories: 32
+  epics_done: 10
   epics_in_progress: 0
   epics_backlog: 0
-  stories_done: 23
+  stories_done: 32
   stories_in_progress: 0
   stories_ready_for_dev: 0
   stories_in_review: 0
@@ -111,3 +136,21 @@ summary:
 # E-04 (人物管理) - 可独立，与搜索集成
 #   ↓
 # E-05 (UI 增强) - 可在任何阶段进行
+#   ↓
+# E-06 (相册增强) - 完成后发现缩略图 Bug
+#   ↓
+# E-07 (技术债务) - 修复缩略图加载问题，P0 优先级
+#
+# E-08 (双向量架构) - 架构升级，依赖 E-02 和 E-04
+#   ↓
+#   ├── 需要 E-02 的 CLIP 语义向量能力
+#   └── 需要 E-04 的人脸检测基础
+#
+# E-09 (UX 导航优化) - 优化人物页面导航体验
+#   ↓
+#   └── 依赖 E-04 的人物管理功能
+#
+# E-10 (人脸扫描状态同步修复) - P0 阻塞性问题修复
+#   ↓
+#   ├── 依赖 E-04 的人脸检测基础
+#   └── 可与 E-08 的批量处理机制集成

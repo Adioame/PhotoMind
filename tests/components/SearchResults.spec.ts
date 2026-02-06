@@ -249,6 +249,309 @@ describe('SearchResults Component - Epic E-05', () => {
   })
 
   // ============================================
+  // Story E-05.2: 搜索结果展示 - Additional Tests
+  // ============================================
+  describe('E-05.2: 搜索结果展示 - Additional Tests', () => {
+    it('should display "未找到结果" when totalResults is 0 (AC: 显示结果列表)', async () => {
+      createWrapper()
+
+      searchStore.results = []
+      searchStore.totalResults = 0
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const countText = wrapper.find('.results-count')
+      expect(countText.text()).toContain('未找到结果')
+    })
+
+    it('should display correct total results count (AC: 显示结果列表)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1' },
+        { photoUuid: '2' },
+        { photoUuid: '3' },
+        { photoUuid: '4' },
+        { photoUuid: '5' }
+      ]
+      searchStore.totalResults = 100
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const countText = wrapper.find('.results-count')
+      expect(countText.text()).toContain('100')
+    })
+
+    it('should display time in seconds for large values (AC: 显示搜索耗时)', async () => {
+      createWrapper()
+
+      searchStore.results = [{ photoUuid: '1' }]
+      searchStore.totalResults = 1
+      searchStore.hasSearched = true
+      searchStore.searchTime = 2500
+
+      await wrapper.vm.$nextTick()
+
+      const timeText = wrapper.find('.results-time')
+      expect(timeText.text()).toContain('2.50s')
+    })
+
+    it('should render results grid with auto-fill columns (AC: 以网格形式展示照片缩略图)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1', thumbnailPath: '/path/1.jpg' },
+        { photoUuid: '2', thumbnailPath: '/path/2.jpg' },
+        { photoUuid: '3', thumbnailPath: '/path/3.jpg' }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const grid = wrapper.find('.results-grid')
+      expect(grid.exists()).toBe(true)
+      expect(grid.classes()).toContain('grid')
+    })
+
+    it('should display thumbnail images with file:// prefix (AC: 以网格形式展示照片缩略图)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1', fileName: 'photo1.jpg', filePath: '/photos/vacation.jpg' }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const img = wrapper.find('.photo-thumbnail img')
+      expect(img.exists()).toBe(true)
+      expect(img.attributes('src')).toBe('file:///photos/vacation.jpg')
+    })
+
+    it('should show placeholder when no thumbnail (AC: 以网格形式展示照片缩略图)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1', fileName: 'photo1.jpg' }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const placeholder = wrapper.find('.thumbnail-placeholder')
+      expect(placeholder.exists()).toBe(true)
+    })
+
+    it('should format similarity as percentage (AC: 置信度指示器)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1', fileName: 'photo.jpg', similarity: 0.753 }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const scoreText = wrapper.find('.similarity-score')
+      expect(scoreText.text()).toContain('75%')
+    })
+
+    it('should display all source badges (AC: 显示匹配原因标签)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        {
+          photoUuid: '1',
+          fileName: 'photo.jpg',
+          sources: [
+            { type: 'keyword' },
+            { type: 'semantic' },
+            { type: 'people' }
+          ]
+        }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const badges = wrapper.findAll('.source-badge')
+      expect(badges.length).toBe(3)
+    })
+
+    it('should apply correct class for source type (AC: 显示匹配原因标签)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        {
+          photoUuid: '1',
+          sources: [{ type: 'keyword' }]
+        },
+        {
+          photoUuid: '2',
+          sources: [{ type: 'semantic' }]
+        }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const keywordBadge = wrapper.find('.source-badge.keyword')
+      const semanticBadge = wrapper.find('.source-badge.semantic')
+
+      expect(keywordBadge.exists()).toBe(true)
+      expect(semanticBadge.exists()).toBe(true)
+    })
+
+    it('should emit loadMore when scrolling near bottom (AC: 加载更多结果)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1' },
+        { photoUuid: '2' }
+      ]
+      searchStore.totalResults = 100
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const loadMore = wrapper.find('.load-more')
+      expect(loadMore.exists()).toBe(true)
+
+      await loadMore.find('.load-more-button').trigger('click')
+
+      expect(wrapper.emitted('loadMore')).toBeTruthy()
+    })
+
+    it('should hide load more when all results loaded (AC: 加载更多结果)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1' },
+        { photoUuid: '2' }
+      ]
+      searchStore.totalResults = 2
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const loadMore = wrapper.find('.load-more')
+      expect(loadMore.exists()).toBe(false)
+    })
+
+    it('should emit photoClick with complete photo data (AC: 支持点击放大查看)', async () => {
+      createWrapper()
+
+      const mockPhoto = {
+        photoUuid: 'test-uuid-123',
+        fileName: 'vacation.jpg',
+        thumbnailPath: '/path/to/thumb.jpg',
+        similarity: 0.92,
+        sources: [{ type: 'keyword' }]
+      }
+      searchStore.results = [mockPhoto]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const card = wrapper.find('.result-card')
+      await card.trigger('click')
+
+      expect(wrapper.emitted('photoClick')).toBeTruthy()
+      expect(wrapper.emitted('photoClick')[0][0]).toEqual(mockPhoto)
+    })
+
+    it('should truncate long file names (AC: 以网格形式展示照片缩略图)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        {
+          photoUuid: '1',
+          fileName: 'very_long_file_name_that_exceeds_the_display_area.jpg'
+        }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const photoName = wrapper.find('.photo-name')
+      expect(photoName.exists()).toBe(true)
+      expect(photoName.attributes('title')).toBe('very_long_file_name_that_exceeds_the_display_area.jpg')
+    })
+
+    it('should show clear button in results header (AC: 显示结果列表)', async () => {
+      createWrapper()
+
+      searchStore.results = [{ photoUuid: '1' }]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const clearButton = wrapper.find('.action-button')
+      expect(clearButton.exists()).toBe(true)
+      expect(clearButton.text()).toContain('清除搜索')
+    })
+
+    it('should not show stats header before search (AC: 显示结果列表)', async () => {
+      createWrapper()
+
+      searchStore.hasSearched = false
+
+      await wrapper.vm.$nextTick()
+
+      const header = wrapper.find('.results-header')
+      expect(header.exists()).toBe(false)
+    })
+
+    it('should not show filters before search (AC: 以网格形式展示照片缩略图)', async () => {
+      createWrapper()
+
+      searchStore.query = 'test'
+      searchStore.hasSearched = false
+
+      await wrapper.vm.$nextTick()
+
+      const filters = wrapper.find('.filter-tags')
+      expect(filters.exists()).toBe(false)
+    })
+
+    it('should handle mixed similarity levels (AC: 置信度指示器)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1', similarity: 0.95 },
+        { photoUuid: '2', similarity: 0.75 },
+        { photoUuid: '3', similarity: 0.55 },
+        { photoUuid: '4', similarity: 0.35 }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const badges = wrapper.findAll('.similarity-badge')
+      expect(badges[0].text()).toBe('非常相似')
+      expect(badges[1].text()).toBe('相似')
+      expect(badges[2].text()).toBe('一般')
+      expect(badges[3].text()).toBe('较低')
+    })
+
+    it('should display photo name in results (AC: 以网格形式展示照片缩略图)', async () => {
+      createWrapper()
+
+      searchStore.results = [
+        { photoUuid: '1', fileName: 'IMG_20240115_001.jpg' }
+      ]
+      searchStore.hasSearched = true
+
+      await wrapper.vm.$nextTick()
+
+      const photoName = wrapper.find('.photo-name')
+      expect(photoName.text()).toBe('IMG_20240115_001.jpg')
+    })
+  })
+
+  // ============================================
   // Layout Options Tests
   // ============================================
   describe('SearchResults Layout Options', () => {

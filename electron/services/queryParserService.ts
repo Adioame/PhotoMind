@@ -146,7 +146,7 @@ export class QueryParserService {
         return { success: false, error: `API 错误: ${error}` }
       }
 
-      const data = await response.json()
+      const data = await response.json() as { choices?: Array<{ message?: { content: string } }> }
       const content = data.choices?.[0]?.message?.content || ''
       return { success: true, result: content }
     } catch (error) {
@@ -305,8 +305,10 @@ export class QueryParserService {
     // 限制缓存大小
     if (this.cache.size > this.CACHE_MAX_SIZE) {
       // 删除最旧的条目
-      const firstKey = this.cache.keys().next().value
-      this.cache.delete(firstKey)
+      const firstKey = this.cache.keys().next().value as string | undefined
+      if (firstKey) {
+        this.cache.delete(firstKey)
+      }
     }
   }
 

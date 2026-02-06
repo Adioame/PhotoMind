@@ -106,11 +106,27 @@ export const useAlbumStore = defineStore('album', () => {
   async function loadAlbums(): Promise<void> {
     loading.value = true
     try {
-      const response = await (window as any).photoAPI?.albums?.getAll?.()
+      const response = await (window as any).photoAPI?.albums?.getSmart?.()
       albums.value = response || []
     } catch (error) {
       console.error('Failed to load albums:', error)
       albums.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // 刷新智能相册
+  async function refresh(): Promise<void> {
+    loading.value = true
+    try {
+      // 通知后端刷新
+      await (window as any).photoAPI?.albums?.refresh?.()
+      // 重新获取相册列表
+      const response = await (window as any).photoAPI?.albums?.getSmart?.()
+      albums.value = response || []
+    } catch (error) {
+      console.error('Failed to refresh albums:', error)
     } finally {
       loading.value = false
     }
@@ -414,6 +430,7 @@ export const useAlbumStore = defineStore('album', () => {
     isExporting,
     // Actions
     loadAlbums,
+    refresh,
     loadAlbumPhotos,
     createSmartAlbum,
     createManualAlbum,

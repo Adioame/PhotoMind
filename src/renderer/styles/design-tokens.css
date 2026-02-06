@@ -1,0 +1,224 @@
+/**
+ * PhotoMind Design Tokens
+ * 反AI味 · 现代极简主义设计令牌
+ *
+ * 使用方式：在 main.ts 中导入此文件
+ * import './styles/design-tokens.css'
+ */
+
+:root {
+  /* ================================
+     🌈 颜色系统 (Colors)
+     ================================ */
+
+  /* 背景色 */
+  --bg-primary: #F5F5F7;
+  --bg-secondary: #FFFFFF;
+  --bg-tertiary: #FAFAFA;
+  --bg-glass: rgba(255, 255, 255, 0.72);
+  --bg-glass-dark: rgba(28, 28, 30, 0.72);
+
+  /* 文字色 */
+  --text-primary: #1A1A1A;
+  --text-secondary: #6E6E73;
+  --text-tertiary: #A1A1A6;
+  --text-inverse: #FFFFFF;
+  --text-dark-primary: #FFFFFF;
+  --text-dark-secondary: #98989D;
+
+  /* 主色调 - 苹果蓝 (取代AI味紫蓝) */
+  --primary-default: #0071E3;
+  --primary-hover: #0077ED;
+  --primary-pressed: #0068D1;
+  --primary-light: #E8F4FD;
+  --primary-subtle: rgba(0, 113, 227, 0.1);
+
+  /* 功能色 */
+  --success: #34C759;
+  --warning: #FF9500;
+  --error: #FF3B30;
+  --info: #5E5CE6;
+
+  /* 边框与分割线 */
+  --border-light: rgba(0, 0, 0, 0.05);
+  --border-medium: rgba(0, 0, 0, 0.1);
+  --border-dark: rgba(255, 255, 255, 0.08);
+
+  /* ================================
+     📐 间距系统 (Spacing)
+     ================================ */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* ================================
+     🔲 圆角系统 (Radius)
+     ================================ */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ================================
+     💡 阴影系统 (Shadows)
+     ================================ */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 20px 48px rgba(0, 0, 0, 0.12);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.08);
+
+  /* ================================
+     📝 字体系统 (Typography)
+     ================================ */
+  --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  /* 字号 */
+  --text-hero: 32px;
+  --text-h1: 24px;
+  --text-h2: 20px;
+  --text-h3: 18px;
+  --text-body: 16px;
+  --text-small: 14px;
+  --text-caption: 12px;
+
+  /* 字重 */
+  --font-regular: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* 行高 */
+  --leading-tight: 1.2;
+  --leading-snug: 1.3;
+  --leading-normal: 1.4;
+  --leading-relaxed: 1.5;
+
+  /* ================================
+     🎯 动效系统 (Motion)
+     ================================ */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 350ms;
+
+  /* ================================
+     🧩 组件特定变量
+     ================================ */
+  --nav-height: 64px;
+  --nav-height-mobile: 56px;
+  --sidebar-width: 260px;
+  --content-max-width: 1400px;
+}
+
+/* ================================
+   🪟 玻璃拟态工具类
+   ================================ */
+.glass {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+.glass-dark {
+  background: var(--bg-glass-dark);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+.glass-border {
+  border-bottom: 1px solid var(--border-light);
+}
+
+.glass-border-dark {
+  border-bottom: 1px solid var(--border-dark);
+}
+
+/* ================================
+   📦 卡片工具类
+   ================================ */
+.card {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  transition: transform var(--duration-normal) var(--ease-default),
+              box-shadow var(--duration-normal) var(--ease-default);
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-hover);
+}
+
+.card-glass {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+}
+
+/* ================================
+   🎯 交互工具类
+   ================================ */
+.interactive {
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+.interactive:hover {
+  opacity: 0.8;
+}
+
+.interactive:active {
+  transform: scale(0.98);
+}
+
+/* ================================
+   📝 文字工具类
+   ================================ */
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-tertiary { color: var(--text-tertiary); }
+.text-inverse { color: var(--text-inverse); }
+
+.font-medium { font-weight: var(--font-medium); }
+.font-semibold { font-weight: var(--font-semibold); }
+.font-bold { font-weight: var(--font-bold); }
+
+/* ================================
+   📱 响应式工具
+   ================================ */
+@media (max-width: 640px) {
+  :root {
+    --nav-height: var(--nav-height-mobile);
+  }
+}
+
+/* ================================
+   🌙 深色模式支持
+   ================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #000000;
+    --bg-secondary: #1C1C1E;
+    --bg-tertiary: #2C2C2E;
+    --bg-glass: rgba(28, 28, 30, 0.72);
+
+    --text-primary: #FFFFFF;
+    --text-secondary: #98989D;
+    --text-tertiary: #6C6C70;
+
+    --border-light: rgba(255, 255, 255, 0.08);
+    --border-medium: rgba(255, 255, 255, 0.15);
+  }
+}

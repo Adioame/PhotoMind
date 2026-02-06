@@ -43,6 +43,13 @@ export class FolderScanner {
       skipHidden = true
     } = options
 
+    // 检查是否是应用程序目录（防止用户误选项目文件夹）
+    const appDir = process.cwd()
+    if (folderPath === appDir || folderPath.startsWith(appDir + '/')) {
+      console.warn(`[FolderScanner] 跳过应用程序目录: ${folderPath}`)
+      return []
+    }
+
     const files: ScannedFile[] = []
 
     await this.scanDirectory(folderPath, '', files, {
@@ -101,6 +108,11 @@ export class FolderScanner {
    */
   private shouldIncludeFile(filename: string, options: ScanOptions): boolean {
     const ext = extname(filename).toLowerCase()
+
+    // 必须有扩展名
+    if (!ext || ext === filename) {
+      return false
+    }
 
     if (options.skipHidden && filename.startsWith('.')) {
       return false

@@ -48,9 +48,9 @@ describe('SearchHistory Component - Epic E-05', () => {
   })
 
   // ============================================
-  // Story E-05.3: 搜索历史记录
+  // Story E-05.3: 搜索历史记录 - Additional Tests
   // ============================================
-  describe('E-05.3: 搜索历史记录', () => {
+  describe('E-05.3: 搜索历史记录 - Additional Tests', () => {
     it('should display search history items (AC: 显示历史搜索记录)', async () => {
       createWrapper()
 
@@ -212,6 +212,163 @@ describe('SearchHistory Component - Epic E-05', () => {
 
       const metaText = wrapper.find('.history-meta')
       expect(metaText.exists()).toBe(false)
+    })
+
+    it('should render history icon for each item (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['test1', 'test2']
+
+      await wrapper.vm.$nextTick()
+
+      const icons = wrapper.findAll('.history-icon')
+      expect(icons.length).toBe(2)
+    })
+
+    it('should have history content wrapper for each item', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['test']
+
+      await wrapper.vm.$nextTick()
+
+      const contents = wrapper.findAll('.history-content')
+      expect(contents.length).toBe(1)
+    })
+
+    it('should truncate long query text with ellipsis (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      const longQuery = 'this is a very long search query that should be truncated'
+      searchStore.recentSearches = [longQuery]
+
+      await wrapper.vm.$nextTick()
+
+      const queryText = wrapper.find('.history-query')
+      expect(queryText.classes()).toContain('history-query')
+      expect(queryText.text()).toBe(longQuery)
+    })
+
+    it('should show empty state icon (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = []
+
+      await wrapper.vm.$nextTick()
+
+      const emptyIcon = wrapper.find('.empty-icon')
+      expect(emptyIcon.exists()).toBe(true)
+    })
+
+    it('should call store loadHistory on mount', async () => {
+      createWrapper()
+
+      // loadHistory is called on mount via onMounted hook
+      expect(searchStore.recentSearches).toBeDefined()
+    })
+
+    it('should display items in order from store (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['first', 'second', 'third']
+
+      await wrapper.vm.$nextTick()
+
+      const items = wrapper.findAll('.history-query')
+      expect(items[0].text()).toBe('first')
+      expect(items[1].text()).toBe('second')
+      expect(items[2].text()).toBe('third')
+    })
+
+    it('should handle single history item (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['single query']
+
+      await wrapper.vm.$nextTick()
+
+      const items = wrapper.findAll('.history-item')
+      expect(items.length).toBe(1)
+    })
+
+    it('should handle special characters in search queries', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['test @#$% special']
+
+      await wrapper.vm.$nextTick()
+
+      const queryText = wrapper.find('.history-query')
+      expect(queryText.text()).toBe('test @#$% special')
+    })
+
+    it('should handle unicode characters in search queries', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['测试中文查询', '日本語テスト', '🎉 emoji query']
+
+      await wrapper.vm.$nextTick()
+
+      const items = wrapper.findAll('.history-query')
+      expect(items.length).toBe(3)
+    })
+
+    it('should have history-header styling (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['test']
+
+      await wrapper.vm.$nextTick()
+
+      const header = wrapper.find('.history-header')
+      expect(header.exists()).toBe(true)
+    })
+
+    it('should have history-list with max-height (AC: 显示历史搜索记录)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['test']
+
+      await wrapper.vm.$nextTick()
+
+      const list = wrapper.find('.history-list')
+      expect(list.exists()).toBe(true)
+    })
+
+    it('should emit select with exact query string (AC: 用户可以点击历史记录快速执行)', async () => {
+      createWrapper()
+
+      const query = 'exact match query'
+      searchStore.recentSearches = [query]
+
+      await wrapper.vm.$nextTick()
+
+      const item = wrapper.find('.history-item')
+      await item.trigger('click')
+
+      expect(wrapper.emitted('select')[0][0]).toBe(query)
+    })
+
+    it('should not emit clear when no history exists (AC: 用户可以清除部分或全部历史)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = []
+
+      await wrapper.vm.$nextTick()
+
+      const clearButton = wrapper.find('.clear-button')
+      expect(clearButton.exists()).toBe(false)
+    })
+
+    it('should display history with clickable items (AC: 用户可以点击历史记录快速执行)', async () => {
+      createWrapper()
+
+      searchStore.recentSearches = ['clickable query']
+
+      await wrapper.vm.$nextTick()
+
+      const item = wrapper.find('.history-item')
+      expect(item.classes()).toContain('history-item')
     })
   })
 

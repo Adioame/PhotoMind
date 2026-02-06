@@ -11,20 +11,20 @@ import { PhotoDatabase } from '../database/db.js'
 export interface Person {
   id: number
   name: string
-  displayName: string
-  faceCount: number
-  createdAt: string
-  isManual: boolean
+  display_name: string
+  face_count: number
+  created_at: string
+  is_manual: boolean
 }
 
 export interface PersonTag {
   id: number
-  photoId: number
-  personId: number
-  personName: string
-  boundingBox?: BoundingBox
+  photo_id: number
+  person_id: number
+  person_name: string
+  bounding_box?: BoundingBox
   confidence: number
-  isManual: boolean
+  is_manual: boolean
 }
 
 export interface BoundingBox {
@@ -60,10 +60,10 @@ export class PersonService {
     return persons.map((p: any) => ({
       id: p.id,
       name: p.name,
-      displayName: p.display_name || p.name,
-      faceCount: p.face_count || 0,
-      createdAt: p.created_at,
-      isManual: !!p.is_manual
+      display_name: p.display_name || p.name,
+      face_count: p.face_count || 0,
+      created_at: p.created_at,
+      is_manual: !!p.is_manual
     }))
   }
 
@@ -77,10 +77,10 @@ export class PersonService {
     return {
       id: person.id,
       name: person.name,
-      displayName: person.display_name || person.name,
-      faceCount: person.face_count || 0,
-      createdAt: person.created_at,
-      isManual: !!person.is_manual
+      display_name: person.display_name || person.name,
+      face_count: person.face_count || 0,
+      created_at: person.created_at,
+      is_manual: !!person.is_manual
     }
   }
 
@@ -150,10 +150,10 @@ export class PersonService {
     return results.map((p: any) => ({
       id: p.id,
       name: p.name,
-      displayName: p.display_name || p.name,
-      faceCount: p.face_count || 0,
-      createdAt: p.created_at,
-      isManual: !!p.is_manual
+      display_name: p.display_name || p.name,
+      face_count: p.face_count || 0,
+      created_at: p.created_at,
+      is_manual: !!p.is_manual
     }))
   }
 
@@ -187,7 +187,7 @@ export class PersonService {
         personId: params.personId,
         boundingBox: params.boundingBox,
         confidence: 1.0,
-        is_manual: 1  // 手动标记
+        isManual: 1  // 手动标记
       })
 
       // 更新人物 face_count
@@ -229,12 +229,12 @@ export class PersonService {
     const faces = this.database.getFacesByPhoto(photoId)
     return faces.map((f: any) => ({
       id: f.id,
-      photoId: f.photo_id,
-      personId: f.person_id,
-      personName: f.person_name || '未知',
-      boundingBox: f.bounding_box ? JSON.parse(f.bounding_box) : undefined,
+      photo_id: f.photo_id,
+      person_id: f.person_id,
+      person_name: f.person_name || '未知',
+      bounding_box: f.bounding_box ? JSON.parse(f.bounding_box) : undefined,
       confidence: f.confidence || 0,
-      isManual: !!f.is_manual
+      is_manual: !!f.is_manual
     }))
   }
 
@@ -268,7 +268,7 @@ export class PersonService {
    */
   getStats(): { totalPersons: number; totalTags: number } {
     const persons = this.getAllPersons()
-    const totalTags = persons.reduce((sum, p) => sum + p.faceCount, 0)
+    const totalTags = persons.reduce((sum, p) => sum + p.face_count, 0)
     return {
       totalPersons: persons.length,
       totalTags
@@ -301,7 +301,7 @@ export class PersonService {
     try {
       // 获取所有标签以更新对应的 person face_count
       const tags = this.getPhotoTags(photoId)
-      const personIds = [...new Set(tags.map(t => t.personId))]
+      const personIds = [...new Set(tags.map(t => t.person_id))]
 
       this.database.run('DELETE FROM faces WHERE photo_id = ?', [photoId])
 

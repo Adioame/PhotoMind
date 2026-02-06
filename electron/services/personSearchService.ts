@@ -94,7 +94,7 @@ export class PersonSearchService {
           person,
           matchScore: 1,
           matchedField: 'name',
-          photoCount: person.faceCount
+          photoCount: person.face_count
         })),
         total: allPersons.length,
         query,
@@ -115,9 +115,9 @@ export class PersonSearchService {
     results.sort((a, b) => {
       switch (sortBy) {
         case 'recent':
-          return (b.person.createdAt || '').localeCompare(a.person.createdAt || '')
+          return (b.person.created_at || '').localeCompare(a.person.created_at || '')
         case 'oldest':
-          return (a.person.createdAt || '').localeCompare(b.person.createdAt || '')
+          return (a.person.created_at || '').localeCompare(b.person.created_at || '')
         case 'count':
         default:
           return b.photoCount - a.photoCount
@@ -142,7 +142,7 @@ export class PersonSearchService {
    */
   private matchPerson(person: Person, searchTerms: string[]): PersonSearchResult | null {
     const name = person.name.toLowerCase()
-    const displayName = person.displayName.toLowerCase()
+    const displayName = person.display_name.toLowerCase()
 
     let maxScore = 0
     let matchedField = ''
@@ -153,7 +153,7 @@ export class PersonSearchService {
           person,
           matchScore: 1.0,
           matchedField: 'name',
-          photoCount: person.faceCount
+          photoCount: person.face_count
         }
       }
 
@@ -173,7 +173,7 @@ export class PersonSearchService {
         person,
         matchScore: maxScore,
         matchedField,
-        photoCount: person.faceCount
+        photoCount: person.face_count
       }
     }
 
@@ -187,15 +187,15 @@ export class PersonSearchService {
     switch (sortBy) {
       case 'recent':
         return [...persons].sort((a, b) =>
-          (b.createdAt || '').localeCompare(a.createdAt || '')
+          (b.created_at || '').localeCompare(a.created_at || '')
         )
       case 'oldest':
         return [...persons].sort((a, b) =>
-          (a.createdAt || '').localeCompare(b.createdAt || '')
+          (a.created_at || '').localeCompare(b.created_at || '')
         )
       case 'count':
       default:
-        return [...persons].sort((a, b) => b.faceCount - a.faceCount)
+        return [...persons].sort((a, b) => b.face_count - a.face_count)
     }
   }
 
@@ -304,13 +304,13 @@ export class PersonSearchService {
     return persons
       .filter(p =>
         p.name.toLowerCase().includes(searchTerm) ||
-        p.displayName.toLowerCase().includes(searchTerm)
+        p.display_name.toLowerCase().includes(searchTerm)
       )
       .slice(0, limit)
       .map(p => ({
         id: p.id,
-        name: p.displayName,
-        photoCount: p.faceCount
+        name: p.display_name,
+        photoCount: p.face_count
       }))
   }
 
@@ -320,7 +320,7 @@ export class PersonSearchService {
   getPopularPersons(limit: number = 10): Person[] {
     const persons = personService.getAllPersons()
     return persons
-      .sort((a, b) => b.faceCount - a.faceCount)
+      .sort((a, b) => b.face_count - a.face_count)
       .slice(0, limit)
   }
 
@@ -362,12 +362,12 @@ export class PersonSearchService {
     mostTaggedPerson?: Person
   } {
     const persons = personService.getAllPersons()
-    const totalTaggedPhotos = persons.reduce((sum, p) => sum + p.faceCount, 0)
+    const totalTaggedPhotos = persons.reduce((sum, p) => sum + p.face_count, 0)
 
     let mostTagged: Person | undefined
     if (persons.length > 0) {
       mostTagged = persons.reduce((a, b) =>
-        a.faceCount > b.faceCount ? a : b
+        a.face_count > b.face_count ? a : b
       )
     }
 

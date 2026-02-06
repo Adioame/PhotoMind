@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('photoAPI', {
       ipcRenderer.invoke('photos:get-count'),
     getDetail: (photoId: string) =>
       ipcRenderer.invoke('photos:get-detail', photoId),
+    getWithoutEmbeddings: (limit?: number) =>
+      ipcRenderer.invoke('photos:get-without-embeddings', limit),
+    saveEmbedding: (photoUuid: string, vector: number[]) =>
+      ipcRenderer.invoke('photos:save-embedding', photoUuid, vector),
     search: (query: string, filters?: any) =>
       ipcRenderer.invoke('photos:search', query, filters),
     delete: (photoId: number) =>
@@ -36,21 +40,8 @@ contextBridge.exposeInMainWorld('photoAPI', {
       ipcRenderer.invoke('people:update', id, person),
     delete: (id: number) =>
       ipcRenderer.invoke('people:delete', id),
-    search: (query: string) => ipcRenderer.invoke('people:search', query),
-    searchPhotos: (personName: string) =>
-      ipcRenderer.invoke('people:search-photos', personName),
-    tag: (params: { photoId: number; personId: number; boundingBox?: any }) =>
-      ipcRenderer.invoke('people:tag', params),
-    untag: (photoId: number, personId: number) =>
-      ipcRenderer.invoke('people:untag', photoId, personId),
-    getPhotoTags: (photoId: number) =>
-      ipcRenderer.invoke('people:get-photo-tags', photoId),
-    getPersonPhotos: (personId: number) =>
-      ipcRenderer.invoke('people:get-person-photos', personId),
-    getStats: () =>
-      ipcRenderer.invoke('people:get-stats'),
-    // 人物搜索相关
-    search: (options: { query: string; limit?: number; offset?: number; sortBy?: string }) =>
+    // 人物搜索
+    search: (options: { query: string; limit?: number; offset?: number; sortBy?: 'count' | 'recent' | 'oldest' }) =>
       ipcRenderer.invoke('people:search', options),
     getPhotos: (filter: { personId: number; year?: number; month?: number; limit?: number; offset?: number }) =>
       ipcRenderer.invoke('people:get-photos', filter),
@@ -78,6 +69,7 @@ contextBridge.exposeInMainWorld('photoAPI', {
   // 相册相关
   albums: {
     getSmart: () => ipcRenderer.invoke('albums:get-smart'),
+    refresh: () => ipcRenderer.invoke('albums:refresh'),
   },
 
   // 时间线相关
@@ -97,6 +89,12 @@ contextBridge.exposeInMainWorld('photoAPI', {
     importFolder: (folderPath: string) => ipcRenderer.invoke('local:import-folder', folderPath),
     importPhoto: (filePath: string) => ipcRenderer.invoke('local:import-photo', filePath),
     getCount: () => ipcRenderer.invoke('local:get-count'),
+    // 监听导入进度
+    onProgress: (callback: (progress: any) => void) => {
+      const listener = (_: any, progress: any) => callback(progress)
+      ipcRenderer.on('local:import-progress', listener)
+      return () => ipcRenderer.off('local:import-progress', listener)
+    },
   },
 
   // 配置相关
@@ -124,11 +122,42 @@ contextBridge.exposeInMainWorld('photoAPI', {
     detect: (imagePath: string) => ipcRenderer.invoke('face:detect', imagePath),
     detectBatch: (imagePaths: string[]) => ipcRenderer.invoke('face:detect-batch', imagePaths),
     cancel: () => ipcRenderer.invoke('face:cancel'),
+    scanAll: () => ipcRenderer.invoke('face:scan-all'),
+    // 🚨 队列状态诊断
+    getQueueStatus: () => ipcRenderer.invoke('face:get-queue-status'),
+    resetQueue: () => ipcRenderer.invoke('face:reset-queue'),
+    // 🆕 获取未命名的人脸（未聚类）
+    getUnnamedFaces: (limit?: number) => ipcRenderer.invoke('face:get-unnamed-faces', limit),
+    // 进度事件
     onProgress: (callback: (progress: any) => void) => {
       const listener = (_: any, progress: any) => callback(progress)
       ipcRenderer.on('face:progress', listener)
       return () => ipcRenderer.off('face:progress', listener)
     },
+    // 状态事件
+    onStatus: (callback: (status: any) => void) => {
+      const listener = (_: any, status: any) => callback(status)
+      ipcRenderer.on('face:status', listener)
+      return () => ipcRenderer.off('face:status', listener)
+    },
+    // 扫描完成事件
+    onScanComplete: (callback: (result: { total: number; completed: number; failed: number; detectedFaces: number }) => void) => {
+      const listener = (_: any, result: any) => callback(result)
+      ipcRenderer.on('face:scan-complete', listener)
+      return () => ipcRenderer.off('face:scan-complete', listener)
+    },
+  },
+
+  // 🚨 诊断工具（开发调试使用）
+  diagnostic: {
+    // 获取人脸检测统计
+    getFaceStats: () => ipcRenderer.invoke('diagnostic:face-stats'),
+    // 清理所有人脸数据（用于重置）
+    clearFaceData: () => ipcRenderer.invoke('diagnostic:clear-face-data'),
+    // 重置人物关联（用于重新聚类）
+    resetPersonLinks: () => ipcRenderer.invoke('diagnostic:reset-person-links'),
+    // 执行原始SQL查询（仅限SELECT）
+    query: (sql: string) => ipcRenderer.invoke('diagnostic:query', sql),
   },
 
   // 人脸匹配相关
@@ -141,6 +170,41 @@ contextBridge.exposeInMainWorld('photoAPI', {
       ipcRenderer.invoke('face:assign', faceIds, personId),
     unmatch: (faceId: number) => ipcRenderer.invoke('face:unmatch', faceId),
     getStats: () => ipcRenderer.invoke('face:get-matching-stats'),
+    // 向量重新生成
+    regenerateStart: (options?: { batchSize?: number; resume?: boolean }) =>
+      ipcRenderer.invoke('face:regenerate-start', options),
+    regeneratePause: () => ipcRenderer.invoke('face:regenerate-pause'),
+    regenerateGetProgress: () => ipcRenderer.invoke('face:regenerate-progress'),
+    regenerateReset: () => ipcRenderer.invoke('face:regenerate-reset'),
+    regenerateRecluster: () => ipcRenderer.invoke('face:regenerate-recluster'),
+    cleanupPersons: () => ipcRenderer.invoke('face:cleanup-persons'),
+    // 监听重新生成进度
+    onRegenerateProgress: (callback: (progress: any) => void) => {
+      const listener = (_: any, progress: any) => callback(progress)
+      ipcRenderer.on('face:regenerate-progress', listener)
+      return () => ipcRenderer.off('face:regenerate-progress', listener)
+    },
+    // 合并人物
+    mergePersons: (sourcePersonId: number, targetPersonId: number) =>
+      ipcRenderer.invoke('face:merge-persons', sourcePersonId, targetPersonId),
+  },
+
+  // 质量验证相关
+  quality: {
+    validateClustering: () => ipcRenderer.invoke('quality:validate-clustering'),
+    testSemantic: (query: string) => ipcRenderer.invoke('quality:test-semantic', query),
+    runTests: () => ipcRenderer.invoke('quality:run-tests'),
+    generateReport: () => ipcRenderer.invoke('quality:generate-report'),
+    checkVectors: () => ipcRenderer.invoke('quality:check-vectors'),
+  },
+
+  // 性能测试相关
+  perf: {
+    testSearch: (queryCount?: number) => ipcRenderer.invoke('perf:test-search', queryCount),
+    testMemory: () => ipcRenderer.invoke('perf:test-memory'),
+    testConcurrency: (concurrentCount?: number) => ipcRenderer.invoke('perf:test-concurrency', concurrentCount),
+    testModels: () => ipcRenderer.invoke('perf:test-models'),
+    runFull: () => ipcRenderer.invoke('perf:run-full'),
   },
 
   // 系统相关
@@ -172,7 +236,7 @@ contextBridge.exposeInMainWorld('photoAPI', {
     // 取消生成
     cancel: () => ipcRenderer.invoke('embedding:cancel'),
     // 获取生成状态
-    getGenStatus: () => ipcRenderer.invoke('embedding:get-status'),
+    getGenStatus: () => ipcRenderer.invoke('embedding:get-generation-status'),
     // 监听嵌入生成进度
     onProgress: (callback: (progress: any) => void) => {
       const listener = (_: any, progress: any) => callback(progress)
@@ -252,6 +316,28 @@ contextBridge.exposeInMainWorld('photoAPI', {
     reorder: (results: any[], sortBy: 'keyword' | 'semantic' | 'mixed' | 'recency') =>
       ipcRenderer.invoke('search:reorder', results, sortBy),
   },
+
+  // 导入相关（新的统一导入服务）
+  import: {
+    scanFolder: (folderPath: string) => ipcRenderer.invoke('import:scan-folder', folderPath),
+    start: (folderPath: string, options?: any) => ipcRenderer.invoke('import:start', folderPath, options),
+    cancel: () => ipcRenderer.invoke('import:cancel'),
+    getProgress: () => ipcRenderer.invoke('import:get-progress'),
+    // 监听导入进度
+    onProgress: (callback: (progress: any) => void) => {
+      const listener = (_: any, progress: any) => callback(progress)
+      ipcRenderer.on('import:progress', listener)
+      return () => ipcRenderer.off('import:progress', listener)
+    },
+  },
+
+  // 扫描任务相关（持久化、断点续传）
+  scanJob: {
+    getActive: () => ipcRenderer.invoke('scan-job:get-active'),
+    resume: (jobId: string) => ipcRenderer.invoke('scan-job:resume', jobId),
+    getStats: () => ipcRenderer.invoke('scan-job:get-stats'),
+    getAll: (limit?: number) => ipcRenderer.invoke('scan-job:get-all', limit),
+  },
 })
 
 // 监听同步进度
@@ -259,7 +345,4 @@ ipcRenderer.on('sync:progress', (event, data) => {
   console.log('同步进度:', data)
 })
 
-// 监听本地导入进度
-ipcRenderer.on('local:import-progress', (event, data) => {
-  console.log('导入进度:', data)
-})
+console.log('[Preload] API 已注册完成')

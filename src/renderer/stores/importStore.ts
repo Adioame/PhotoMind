@@ -80,6 +80,34 @@ export const useImportStore = defineStore('import', {
   },
 
   actions: {
+    // 开始监听导入进度（通过 IPC 事件）
+    startProgressListener() {
+      if (!(window as any).photoAPI?.import?.onProgress) {
+        console.warn('[ImportStore] import.onProgress 不可用')
+        return null
+      }
+
+      return (window as any).photoAPI.import.onProgress((progress: any) => {
+        this.updateProgress({
+          stage: progress.stage === 'complete' ? 'complete' :
+                 progress.stage === 'cancelled' ? 'cancelled' :
+                 (progress.stage === 'scanning' ? 'scanning' :
+                  (progress.stage === 'preparing' ? 'preparing' :
+                   (progress.stage === 'metadata' ? 'metadata' :
+                    (progress.stage === 'thumbnails' ? 'thumbnails' : 'importing')))),
+          currentFile: progress.currentFile || '',
+          currentIndex: progress.currentIndex || 0,
+          total: progress.total || 0,
+          imported: progress.imported || 0,
+          skipped: progress.skipped || 0,
+          failed: progress.failed || 0,
+          errors: progress.errors || [],
+          startTime: progress.startTime || Date.now(),
+          estimatedTimeRemaining: progress.estimatedTimeRemaining
+        })
+      })
+    },
+
     open() {
       this.isOpen = true
     },

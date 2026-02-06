@@ -1,8 +1,14 @@
 /**
  * PhotoMind - 照片详情视图
+ * 反AI味 · 现代极简主义设计
  */
 <template>
   <div class="photo-detail-container">
+    <!-- 面包屑导航 -->
+    <div class="breadcrumb-wrapper">
+      <BreadcrumbNav :items="breadcrumbItems" />
+    </div>
+
     <!-- 加载状态 -->
     <div class="loading-state" v-if="photoStore.loading">
       <n-spin size="large" />
@@ -15,11 +21,10 @@
         <!-- 图片预览区 -->
         <div class="image-viewer">
           <n-image
-            :src="photoStore.photo.thumbnailPath || photoStore.photo.filePath"
-            :preview-src="photoStore.photo.filePath"
+            :src="getPhotoUrl(photoStore.photo)"
+            :preview-src="getPhotoUrl(photoStore.photo)"
             object-fit="contain"
             style="width: 100%; height: 100%;"
-            preview-disabled
           />
 
           <!-- 导航按钮 -->
@@ -63,7 +68,7 @@
           <div class="photo-meta">
             <!-- 拍摄时间 -->
             <div class="meta-item" v-if="photoStore.photo.takenAt">
-              <n-icon size="20" color="#5E6AD2">
+              <n-icon size="20" color="#0071E3">
                 <CalendarToday24Regular />
               </n-icon>
               <div class="meta-content">
@@ -74,7 +79,7 @@
 
             <!-- 地点 -->
             <div class="meta-item" v-if="photoStore.photo.location?.name">
-              <n-icon size="20" color="#5E6AD2">
+              <n-icon size="20" color="#0071E3">
                 <Location24Regular />
               </n-icon>
               <div class="meta-content">
@@ -85,7 +90,7 @@
 
             <!-- 尺寸 -->
             <div class="meta-item" v-if="photoStore.photo.width">
-              <n-icon size="20" color="#5E6AD2">
+              <n-icon size="20" color="#0071E3">
                 <Image24Regular />
               </n-icon>
               <div class="meta-content">
@@ -96,7 +101,7 @@
 
             <!-- 文件大小 -->
             <div class="meta-item" v-if="photoStore.photo.fileSize">
-              <n-icon size="20" color="#5E6AD2">
+              <n-icon size="20" color="#0071E3">
                 <Document24Regular />
               </n-icon>
               <div class="meta-content">
@@ -194,13 +199,16 @@
     </template>
 
     <!-- 空状态 -->
-    <template v-else>
-      <n-empty description="照片不存在或已被删除">
-        <template #extra>
-          <n-button type="primary" @click="goBack">返回</n-button>
-        </template>
-      </n-empty>
-    </template>
+    <EmptyState
+      v-else
+      type="error"
+      title="照片不存在"
+      description="该照片可能已被删除或不存在"
+      :primary-action="{
+        label: '返回',
+        onClick: goBack
+      }"
+    />
   </div>
 </template>
 
@@ -219,9 +227,16 @@ import {
   Delete24Regular,
   FullScreenMaximize24Regular,
   FullScreenMinimize24Regular,
+  Home24Regular,
+  People24Regular,
+  Person24Regular,
+  ImageMultiple24Regular
 } from '@vicons/fluent'
 import { useMessage, useDialog } from 'naive-ui'
-import { usePhotoDetailStore, type PhotoDetail } from '@/stores/photoDetailStore'
+import { usePhotoDetailStore } from '@/stores/photoDetailStore'
+import { toLocalResourceProtocol } from '@/utils/localResource'
+import EmptyState from '@/components/EmptyState.vue'
+import BreadcrumbNav, { type BreadcrumbItem } from '@/components/nav/BreadcrumbNav.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -232,10 +247,41 @@ const photoStore = usePhotoDetailStore()
 // 全屏状态
 const isFullscreen = ref(false)
 
+// 获取照片 URL
+const getPhotoUrl = (photo: any) => {
+  const path = photo.thumbnailPath || photo.thumbnail_url || photo.filePath
+  if (path && (path.startsWith('/') || /^[a-z]:/i.test(path))) {
+    return toLocalResourceProtocol(path)
+  }
+  return path || ''
+}
+
 // 检查是否有 EXIF 数据
 const hasExifData = computed(() => {
   const meta = photoStore.photo?.metadata
   return !!(meta?.camera || meta?.lens || meta?.aperture || meta?.iso || meta?.shutterSpeed)
+})
+
+// 面包屑项
+const breadcrumbItems = computed((): BreadcrumbItem[] => {
+  const from = route.query.from as string
+  const personId = route.query.personId as string
+
+  if (from === 'person' && personId) {
+    const personName = photoStore.photo?.persons?.find(p => String(p.id) === personId)?.name || '人物'
+    return [
+      { label: '首页', path: '/', icon: Home24Regular },
+      { label: '人物', path: '/people', icon: People24Regular },
+      { label: personName, path: `/people/${personId}`, icon: Person24Regular },
+      { label: '照片详情' }
+    ]
+  }
+
+  return [
+    { label: '首页', path: '/', icon: Home24Regular },
+    { label: '照片', path: '/photos', icon: ImageMultiple24Regular },
+    { label: '照片详情' }
+  ]
 })
 
 // 加载照片
@@ -248,9 +294,16 @@ const loadPhoto = async () => {
   }
 }
 
-// 返回
+// 智能返回
 const goBack = () => {
-  router.back()
+  const from = route.query.from as string
+  const personId = route.query.personId as string
+
+  if (from === 'person' && personId) {
+    router.push(`/people/${personId}`)
+  } else {
+    router.back()
+  }
 }
 
 // 格式化日期时间
@@ -272,7 +325,6 @@ const formatFileSize = (bytes?: number): string => {
 const handleExport = async () => {
   if (!photoStore.photo) return
 
-  // 使用 save dialog 让用户选择导出位置
   const result = await (window as any).photoAPI?.photos?.export({
     photoId: photoStore.photo.id,
     filePath: photoStore.photo.filePath,
@@ -327,7 +379,6 @@ const toggleFullscreen = () => {
 
 // 键盘快捷键处理
 const handleKeydown = (event: KeyboardEvent) => {
-  // 如果用户在输入框中，不触发快捷键
   const target = event.target as HTMLElement
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
     return
@@ -335,55 +386,41 @@ const handleKeydown = (event: KeyboardEvent) => {
 
   switch (event.key) {
     case 'ArrowLeft':
-      // 左箭头：上一张
       if (!photoStore.isFirst) {
         photoStore.navigateTo('prev')
       }
       break
-
     case 'ArrowRight':
-      // 右箭头：下一张
       if (!photoStore.isLast) {
         photoStore.navigateTo('next')
       }
       break
-
     case 'Delete':
     case 'Backspace':
-      // Delete/Backspace：删除照片
       if (photoStore.photo) {
         event.preventDefault()
         handleDelete()
       }
       break
-
     case 'e':
     case 'E':
-      // E 键：导出照片
       if (photoStore.photo) {
         event.preventDefault()
         handleExport()
       }
       break
-
     case 'f':
     case 'F':
-      // F 键：全屏
       if (photoStore.photo) {
         event.preventDefault()
         toggleFullscreen()
       }
       break
-
     case 'Escape':
-      // Esc：退出全屏
       if (document.fullscreenElement) {
         document.exitFullscreen()
         isFullscreen.value = false
       }
-      break
-
-    default:
       break
   }
 }
@@ -408,11 +445,20 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ================================
+   容器
+   ================================ */
 .photo-detail-container {
   height: 100vh;
   background: #1a1a1a;
   display: flex;
   flex-direction: column;
+}
+
+.breadcrumb-wrapper {
+  background: var(--bg-secondary);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .loading-state {
@@ -421,11 +467,11 @@ onUnmounted(() => {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 .loading-state p {
-  margin-top: 16px;
+  margin-top: var(--space-md);
 }
 
 .photo-content {
@@ -434,6 +480,9 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* ================================
+   图片查看器
+   ================================ */
 .image-viewer {
   flex: 1;
   display: flex;
@@ -450,32 +499,48 @@ onUnmounted(() => {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.15);
   border: none;
   color: white;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s;
+  transition: all var(--duration-fast) var(--ease-default);
+  backdrop-filter: blur(10px);
 }
 
 .nav-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.25);
+  transform: translateY(-50%) scale(1.05);
 }
 
 .nav-btn.prev {
-  left: 24px;
+  left: var(--space-lg);
 }
 
 .nav-btn.next {
-  right: 24px;
+  right: var(--space-lg);
 }
 
+.nav-btn.fullscreen-btn {
+  top: var(--space-lg);
+  right: var(--space-lg);
+  left: auto;
+  transform: none;
+}
+
+.nav-btn.fullscreen-btn:hover {
+  transform: scale(1.05);
+}
+
+/* ================================
+   信息面板
+   ================================ */
 .info-panel {
   width: 380px;
-  background: white;
-  padding: 24px;
+  background: var(--bg-secondary);
+  padding: var(--space-lg);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -485,28 +550,28 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-lg);
 }
 
 .panel-header h2 {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-size: var(--text-h3);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
   margin: 0;
   flex: 1;
   word-break: break-all;
 }
 
 .photo-meta {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-lg);
 }
 
 .meta-item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid #f0f0f0;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .meta-item:last-child {
@@ -520,79 +585,78 @@ onUnmounted(() => {
 }
 
 .meta-label {
-  font-size: 12px;
-  color: #999;
+  font-size: var(--text-small);
+  color: var(--text-tertiary);
 }
 
 .meta-value {
-  font-size: 14px;
-  color: #1a1a1a;
+  font-size: var(--text-body);
+  color: var(--text-primary);
 }
 
 .persons-section {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-lg);
 }
 
 .persons-section h3 {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a1a1a;
-  margin: 0 0 12px;
+  font-size: var(--text-body);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-sm);
 }
 
 .persons-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .action-buttons {
   margin-top: auto;
-  padding-top: 24px;
+  padding-top: var(--space-lg);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .shortcuts-hint {
-  margin-top: 16px;
+  margin-top: var(--space-md);
 }
 
 .shortcuts-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-size: 12px;
-  color: #666;
+  gap: var(--space-xs);
+  font-size: var(--text-small);
+  color: var(--text-secondary);
 }
 
 .shortcut-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .shortcut-item kbd {
   display: inline-block;
   padding: 2px 6px;
   font-size: 11px;
-  font-family: monospace;
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  color: #666;
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  min-width: 24px;
+  text-align: center;
 }
 
 .shortcut-item span {
-  color: #999;
+  color: var(--text-tertiary);
 }
 
-.nav-btn.fullscreen-btn {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-}
-
+/* ================================
+   响应式
+   ================================ */
 @media (max-width: 768px) {
   .photo-content {
     flex-direction: column;
@@ -609,11 +673,16 @@ onUnmounted(() => {
   }
 
   .nav-btn.prev {
-    left: 12px;
+    left: var(--space-md);
   }
 
   .nav-btn.next {
-    right: 12px;
+    right: var(--space-md);
+  }
+
+  .nav-btn.fullscreen-btn {
+    top: var(--space-md);
+    right: var(--space-md);
   }
 }
 </style>
