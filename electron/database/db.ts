@@ -57,12 +57,18 @@ export class PhotoDatabase {
         }
       }
 
-      // 验证数据库是否有数据
-      const checkResult = this.db.exec('SELECT COUNT(*) as count FROM photos')
-      console.log('[Database] Initial photo count:', checkResult[0]?.values[0]?.[0])
-
+      // 先创建/验证表结构
       this.createTables()
       console.log('[Database] Tables created/verified')
+
+      // 验证数据库是否有数据
+      try {
+        const checkResult = this.db.exec('SELECT COUNT(*) as count FROM photos')
+        console.log('[Database] Initial photo count:', checkResult[0]?.values[0]?.[0])
+      } catch (e) {
+        console.log('[Database] Could not query photo count (new database)')
+      }
+
       this.save()
       console.log('[Database] DB saved')
     } catch (error) {
@@ -73,6 +79,9 @@ export class PhotoDatabase {
         const SqlJs = await initSqlJs()
         const SQL = SqlJs.default || SqlJs
         this.db = new SQL.Database ? new SQL.Database() : new SQL.PhotoDatabase()
+        // 创建表结构
+        this.createTables()
+        console.log('[Database] Memory DB tables created')
       } catch (e) {
         console.error('内存数据库也无法创建:', e)
       }
@@ -97,6 +106,9 @@ export class PhotoDatabase {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         exif_data TEXT,
         location_data TEXT,
+        latitude REAL,
+        longitude REAL,
+        geohash TEXT,
         thumbnail_path TEXT,
         status TEXT DEFAULT 'local'
       )
@@ -123,8 +135,14 @@ export class PhotoDatabase {
         name TEXT UNIQUE,
         display_name TEXT,
         face_count INTEGER DEFAULT 0,
+        face_thumbnail TEXT,
+        representative_photo_id INTEGER,
+        thumbnail_manually_set INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        is_manual INTEGER DEFAULT 0
+        is_manual INTEGER DEFAULT 0,
+        is_seed INTEGER DEFAULT 0,
+        seed_created_at DATETIME,
+        seed_confidence INTEGER DEFAULT 1
       )
     `)
 
@@ -179,6 +197,8 @@ export class PhotoDatabase {
     // 创建索引
     this.db.run('CREATE INDEX IF NOT EXISTS idx_photos_taken_at ON photos(taken_at)')
     this.db.run('CREATE INDEX IF NOT EXISTS idx_photos_cloud_id ON photos(cloud_id)')
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_photos_location ON photos(latitude, longitude)')
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_photos_geohash ON photos(geohash)')
     this.db.run('CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id)')
     this.db.run('CREATE INDEX IF NOT EXISTS idx_persons_name ON persons(name)')
 
@@ -264,6 +284,113 @@ export class PhotoDatabase {
         this.db.run('ALTER TABLE detected_faces ADD COLUMN vector_version INTEGER DEFAULT 0')
       }
 
+      // 迁移 v4: 同步 persons.face_count 从 detected_faces 表
+      console.log('[Database] 迁移: 同步 face_count')
+      this.db.run(`
+        UPDATE persons SET face_count = (
+          SELECT COUNT(DISTINCT photo_id)
+          FROM detected_faces
+          WHERE person_id = persons.id
+        )
+      `)
+
+      // 迁移 v6-v8: 添加种子人物相关字段 (E-11.1)
+      const personsInfo = this.db.exec("PRAGMA table_info(persons)")
+      const personColumns = personsInfo[0]?.values.map((row: any) => row[1]) || []
+
+      // 迁移 v6: 添加 is_seed 列
+      if (!personColumns.includes('is_seed')) {
+        console.log('[Database] 迁移: 添加 is_seed 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN is_seed INTEGER DEFAULT 0')
+      }
+
+      // 迁移 v7: 添加 seed_created_at 列
+      if (!personColumns.includes('seed_created_at')) {
+        console.log('[Database] 迁移: 添加 seed_created_at 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN seed_created_at DATETIME')
+      }
+
+      // 迁移 v8: 添加 seed_confidence 列
+      if (!personColumns.includes('seed_confidence')) {
+        console.log('[Database] 迁移: 添加 seed_confidence 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN seed_confidence INTEGER DEFAULT 1')
+      }
+
+      // 迁移 v9: 添加 face_thumbnail 列 (用于存储人物头像缩略图路径)
+      if (!personColumns.includes('face_thumbnail')) {
+        console.log('[Database] 迁移: 添加 face_thumbnail 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN face_thumbnail TEXT')
+      }
+
+      // 迁移 v10: 添加 representative_photo_id 列 (E-11.3: 智能缩略图选择)
+      if (!personColumns.includes('representative_photo_id')) {
+        console.log('[Database] 迁移: 添加 representative_photo_id 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN representative_photo_id INTEGER')
+      }
+
+      // 迁移 v11: 添加 thumbnail_manually_set 列 (E-11.3: 标记是否手动设置缩略图)
+      if (!personColumns.includes('thumbnail_manually_set')) {
+        console.log('[Database] 迁移: 添加 thumbnail_manually_set 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN thumbnail_manually_set INTEGER DEFAULT 0')
+      }
+
+      // 迁移 v12: 添加 confidence_score 列 (E-11.4: 聚类置信度分数)
+      if (!personColumns.includes('confidence_score')) {
+        console.log('[Database] 迁移: 添加 confidence_score 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN confidence_score REAL')
+      }
+
+      // 迁移 v13: 添加 confidence_level 列 (E-11.4: 置信度等级)
+      if (!personColumns.includes('confidence_level')) {
+        console.log('[Database] 迁移: 添加 confidence_level 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN confidence_level TEXT')
+      }
+
+      // 迁移 v14: 添加 face_bbox 列 (用于存储人脸边界框信息)
+      if (!personColumns.includes('face_bbox')) {
+        console.log('[Database] 迁移: 添加 face_bbox 列')
+        this.db.run('ALTER TABLE persons ADD COLUMN face_bbox TEXT')
+      }
+
+      // 迁移 v5: 创建触发器自动维护 face_count（插入时）
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_update_face_count_insert
+        AFTER INSERT ON detected_faces
+        WHEN NEW.person_id IS NOT NULL
+        BEGIN
+          UPDATE persons SET face_count = (
+            SELECT COUNT(DISTINCT photo_id) FROM detected_faces WHERE person_id = NEW.person_id
+          ) WHERE id = NEW.person_id;
+        END
+      `)
+
+      // 迁移 v6: 创建触发器自动维护 face_count（更新 person_id 时）
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_update_face_count_update
+        AFTER UPDATE OF person_id ON detected_faces
+        WHEN NEW.person_id IS NOT NULL OR OLD.person_id IS NOT NULL
+        BEGIN
+          UPDATE persons SET face_count = (
+            SELECT COUNT(DISTINCT photo_id) FROM detected_faces WHERE person_id = NEW.person_id
+          ) WHERE id = NEW.person_id;
+          UPDATE persons SET face_count = (
+            SELECT COUNT(DISTINCT photo_id) FROM detected_faces WHERE person_id = OLD.person_id
+          ) WHERE id = OLD.person_id;
+        END
+      `)
+
+      // 迁移 v7: 创建触发器自动维护 face_count（删除时）
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_update_face_count_delete
+        AFTER DELETE ON detected_faces
+        WHEN OLD.person_id IS NOT NULL
+        BEGIN
+          UPDATE persons SET face_count = (
+            SELECT COUNT(DISTINCT photo_id) FROM detected_faces WHERE person_id = OLD.person_id
+          ) WHERE id = OLD.person_id;
+        END
+      `)
+
       console.log('[Database] 迁移完成')
     } catch (error) {
       console.error('[Database] 迁移失败:', error)
@@ -280,7 +407,9 @@ export class PhotoDatabase {
 
   // 查询辅助方法
   public query(sql: string, params: any[] = []): any[] {
-    if (!this.db) return []
+    if (!this.db) {
+      throw new Error('PhotoDatabase not initialized. Call init() first.')
+    }
     const stmt = this.db.prepare(sql)
     stmt.bind(params)
 
@@ -294,7 +423,9 @@ export class PhotoDatabase {
 
   // 执行（用于 INSERT/UPDATE/DELETE）
   run(sql: string, params: any[] = []) {
-    if (!this.db) return { lastInsertRowid: -1 }
+    if (!this.db) {
+      throw new Error('PhotoDatabase not initialized. Call init() first.')
+    }
     try {
       this.db.run(sql, params)
       this.save()
@@ -306,6 +437,55 @@ export class PhotoDatabase {
       console.error(`[Database] SQL执行失败: ${sql}`, error)
       return { lastInsertRowid: -1 }
     }
+  }
+
+  // E-08.2: 带重试机制的数据库操作（处理 SQLITE_BUSY）
+  async runWithRetry(
+    sql: string,
+    params: any[] = [],
+    maxRetries: number = 3,
+    delayMs: number = 500
+  ): Promise<{ lastInsertRowid: number; attempts: number }> {
+    if (!this.db) {
+      throw new Error('PhotoDatabase not initialized. Call init() first.')
+    }
+
+    let attempts = 0
+    let lastError: any
+
+    while (attempts < maxRetries) {
+      attempts++
+      try {
+        this.db.run(sql, params)
+        this.save()
+        const result = this.db.exec('SELECT last_insert_rowid()')
+        const lastId = result[0]?.values[0]?.[0] || 0
+
+        if (attempts > 1) {
+          console.log(`[Database] 重试成功 (${attempts}/${maxRetries}): ${sql.substring(0, 50)}...`)
+        }
+
+        return { lastInsertRowid: lastId, attempts }
+      } catch (error: any) {
+        lastError = error
+        const errorMessage = error?.message || String(error)
+
+        // 检查是否是 SQLITE_BUSY 错误
+        if (errorMessage.includes('BUSY') || errorMessage.includes('database is locked')) {
+          if (attempts < maxRetries) {
+            console.warn(`[Database] SQLITE_BUSY, 等待 ${delayMs}ms 后重试 (${attempts}/${maxRetries})...`)
+            await new Promise(resolve => setTimeout(resolve, delayMs))
+            continue
+          }
+        }
+
+        // 非 BUSY 错误或已达到最大重试次数
+        console.error(`[Database] SQL执行失败 (${attempts}/${maxRetries}): ${sql.substring(0, 100)}`, error)
+        return { lastInsertRowid: -1, attempts }
+      }
+    }
+
+    return { lastInsertRowid: -1, attempts }
   }
 
   // 照片操作
@@ -495,7 +675,7 @@ export class PhotoDatabase {
 
   getAllPersons(): any[] {
     return this.query(`
-      SELECT p.*, COUNT(df.id) as face_count
+      SELECT p.*, COUNT(DISTINCT df.photo_id) as face_count
       FROM persons p
       LEFT JOIN detected_faces df ON p.id = df.person_id
       GROUP BY p.id
@@ -503,18 +683,108 @@ export class PhotoDatabase {
     `)
   }
 
+  /**
+   * 获取所有种子人物（按种子置信度降序）
+   * E-11.1: 种子人物功能
+   */
+  getSeedPersons(): any[] {
+    return this.query(`
+      SELECT p.*, COUNT(DISTINCT df.photo_id) as face_count
+      FROM persons p
+      LEFT JOIN detected_faces df ON p.id = df.person_id
+      WHERE p.is_seed = 1
+      GROUP BY p.id
+      ORDER BY p.seed_confidence DESC, p.seed_created_at DESC
+    `)
+  }
+
+  /**
+   * 标记人物为种子
+   * E-11.1: 种子人物功能
+   */
+  markPersonAsSeed(personId: number): boolean {
+    try {
+      this.run(
+        `UPDATE persons SET is_seed = 1, seed_created_at = CURRENT_TIMESTAMP, seed_confidence = 1 WHERE id = ?`,
+        [personId]
+      )
+      console.log(`[Database] 人物 ${personId} 已标记为种子`)
+      return true
+    } catch (error) {
+      console.error(`[Database] 标记人物 ${personId} 为种子失败:`, error)
+      return false
+    }
+  }
+
+  /**
+   * 取消人物种子标记
+   * E-11.1: 种子人物功能
+   */
+  unmarkPersonAsSeed(personId: number): boolean {
+    try {
+      this.run(
+        `UPDATE persons SET is_seed = 0, seed_created_at = NULL, seed_confidence = 0 WHERE id = ?`,
+        [personId]
+      )
+      console.log(`[Database] 人物 ${personId} 已取消种子标记`)
+      return true
+    } catch (error) {
+      console.error(`[Database] 取消人物 ${personId} 种子标记失败:`, error)
+      return false
+    }
+  }
+
+  /**
+   * 增加种子人物置信度
+   * E-11.1: 当自动匹配成功时调用
+   */
+  incrementSeedConfidence(personId: number): boolean {
+    try {
+      this.run(
+        `UPDATE persons SET seed_confidence = seed_confidence + 1 WHERE id = ? AND is_seed = 1`,
+        [personId]
+      )
+      return true
+    } catch (error) {
+      console.error(`[Database] 增加人物 ${personId} 种子置信度失败:`, error)
+      return false
+    }
+  }
+
   getPersonById(id: number): any {
     const rows = this.query('SELECT * FROM persons WHERE id = ?', [id])
     return rows.length > 0 ? rows[0] : null
   }
 
-  updatePerson(id: number, person: { name?: string; displayName?: string }): boolean {
+  /**
+   * 根据名称查找人物（精确匹配）
+   */
+  findPersonByName(name: string): any | null {
+    const rows = this.query(
+      'SELECT * FROM persons WHERE name = ? OR display_name = ? LIMIT 1',
+      [name, name]
+    )
+    return rows.length > 0 ? rows[0] : null
+  }
+
+  updatePerson(id: number, person: {
+    name?: string;
+    displayName?: string;
+    representativePhotoId?: number;
+    thumbnailManuallySet?: boolean
+  }): boolean {
     try {
       if (person.name) {
         this.run('UPDATE persons SET name = ? WHERE id = ?', [person.name, id])
       }
       if (person.displayName) {
         this.run('UPDATE persons SET display_name = ? WHERE id = ?', [person.displayName, id])
+      }
+      if (person.representativePhotoId !== undefined) {
+        this.run('UPDATE persons SET representative_photo_id = ? WHERE id = ?', [person.representativePhotoId, id])
+      }
+      if (person.thumbnailManuallySet !== undefined) {
+        this.run('UPDATE persons SET thumbnail_manually_set = ? WHERE id = ?', [person.thumbnailManuallySet ? 1 : 0, id])
       }
       return true
     } catch (error) {
@@ -540,14 +810,14 @@ export class PhotoDatabase {
 
   getFacesByPhoto(photoId: number): any[] {
     return this.query(`
-      SELECT f.*, p.name as person_name
-      FROM faces f
-      LEFT JOIN persons p ON f.person_id = p.id
-      WHERE f.photo_id = ?
+      SELECT df.*, p.name as person_name
+      FROM detected_faces df
+      LEFT JOIN persons p ON df.person_id = p.id
+      WHERE df.photo_id = ?
     `, [photoId])
   }
 
-  getPhotosByPerson(personId: number): any[] {
+  getPhotosByPerson(personId: number, limit: number = 100): any[] {
     // 🚨 修复：使用 detected_faces 表而不是 faces 表
     // faces 表是旧的手动标记表，detected_faces 是新的自动检测表
     const rows = this.query(`
@@ -556,7 +826,8 @@ export class PhotoDatabase {
       JOIN detected_faces df ON p.id = df.photo_id
       WHERE df.person_id = ?
       ORDER BY p.taken_at DESC
-    `, [personId])
+      LIMIT ?
+    `, [personId, limit])
     return rows.map(row => ({
       ...row,
       exif_data: row.exif_data ? JSON.parse(row.exif_data) : {},
@@ -571,8 +842,8 @@ export class PhotoDatabase {
     const rows = this.query(`
       SELECT DISTINCT p.*
       FROM photos p
-      JOIN faces f ON p.id = f.photo_id
-      JOIN persons ps ON f.person_id = ps.id
+      JOIN detected_faces df ON p.id = df.photo_id
+      JOIN persons ps ON df.person_id = ps.id
       WHERE ps.name LIKE ? OR ps.display_name LIKE ?
       ORDER BY p.taken_at DESC
     `, [`%${personName}%`, `%${personName}%`])
@@ -878,9 +1149,9 @@ export class PhotoDatabase {
       return this.getAllPersons()
     }
     return this.query(`
-      SELECT p.*, COUNT(f.id) as face_count
+      SELECT p.*, COUNT(df.id) as face_count
       FROM persons p
-      LEFT JOIN faces f ON p.id = f.person_id
+      LEFT JOIN detected_faces df ON p.id = df.person_id
       WHERE p.name LIKE ? OR p.display_name LIKE ?
       GROUP BY p.id
       ORDER BY face_count DESC

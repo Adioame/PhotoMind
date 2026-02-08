@@ -20,7 +20,12 @@
     <div class="search-results" v-if="searchStore.hasSearched">
       <!-- 结果头部 -->
       <div class="results-header">
-        <span class="results-count">找到 {{ searchStore.totalResults }} 张照片</span>
+        <div class="results-info">
+          <span class="results-count">找到 {{ searchStore.totalResults }} 张照片</span>
+          <span v-if="searchStore.matchTypeLabel" class="match-type-badge" :class="searchStore.matchType">
+            {{ searchStore.matchTypeLabel }}
+          </span>
+        </div>
         <span v-if="searchStore.searchTime" class="search-time">耗时 {{ searchStore.searchTime }}ms</span>
       </div>
 
@@ -31,17 +36,45 @@
         @photo-click="openPhoto"
       />
 
-      <!-- 无结果 - 使用 EmptyState -->
-      <EmptyState
-        v-if="!searchStore.isSearching && searchStore.results.length === 0"
-        type="search"
-        description="没有找到符合条件的照片"
-        hint="试试其他关键词或简化搜索条件"
-        :primary-action="{
-          label: '清除搜索',
-          onClick: clearSearch
-        }"
-      />
+      <!-- 人物未找到空状态 -->
+      <div v-if="showPersonNotFound" class="person-not-found">
+        <EmptyState
+          type="people"
+          :description="personNotFoundMessage"
+          hint="请先前往人物页面为人物命名"
+          :primary-action="{
+            label: '去人物页面 →',
+            onClick: () => router.push('/people')
+          }"
+        />
+      </div>
+
+      <!-- 通用无结果空状态 -->
+      <template v-else-if="!searchStore.isSearching && searchStore.results.length === 0">
+        <div class="no-results">
+          <EmptyState
+            type="search"
+            description="没有找到相关照片"
+            hint="试试其他关键词"
+          />
+
+          <!-- 热门搜索建议 -->
+          <div class="hot-search-suggestions">
+            <div class="suggestions-title">试试这些热门搜索：</div>
+            <div class="hot-search-tags">
+              <button
+                v-for="suggestion in hotSearches"
+                :key="suggestion.text"
+                class="hot-search-tag"
+                @click="selectHotSearch(suggestion.text)"
+              >
+                <span class="tag-icon">{{ suggestion.icon }}</span>
+                <span class="tag-text">{{ suggestion.text }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- 初始状态 - 搜索技巧 -->
@@ -125,11 +158,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { CalendarToday24Regular, Location24Regular, People24Regular, Search24Regular } from '@vicons/fluent'
-import { useSearchStore } from '@/stores/searchStore'
+import { CalendarToday24Regular, Location24Regular, People24Regular, Search24Regular, ArrowRight24Regular } from '@vicons/fluent'
+import { useSearchStore, HOT_SEARCHES } from '@/stores/searchStore'
 import PhotoGrid from '../components/PhotoGrid.vue'
 import SearchBar from '../components/search/SearchBar.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -138,6 +171,26 @@ import { toLocalResourceProtocol } from '@/utils/localResource'
 const router = useRouter()
 const message = useMessage()
 const searchStore = useSearchStore()
+
+// 是否显示人物未找到的空状态
+const showPersonNotFound = computed(() => searchStore.emptyStateType === 'person_not_found')
+
+// 获取人物未找到的消息
+const personNotFoundMessage = computed(() => {
+  if (searchStore.emptyStateData?.message) {
+    return searchStore.emptyStateData.message
+  }
+  return '未找到该人物'
+})
+
+// 热门搜索（用于无结果时显示）
+const hotSearches = HOT_SEARCHES.slice(0, 4)
+
+// 选择热门搜索
+const selectHotSearch = (text: string) => {
+  searchStore.query = text
+  searchStore.searchWithIntent()
+}
 
 // 预览状态
 const showPreview = ref(false)
@@ -153,15 +206,14 @@ const getPhotoUrl = (photo: any) => {
 }
 
 // 处理搜索
-const handleSearch = (query: string) => {
+const handleSearch = async (query: string) => {
   if (!query.trim()) {
     message.warning('请输入搜索关键词')
     return
   }
 
-  if (searchStore.results.length === 0 && !searchStore.isSearching) {
-    message.info('没有找到符合条件的照片')
-  }
+  // 执行搜索
+  await searchStore.searchWithIntent()
 }
 
 // 清除搜索
@@ -232,14 +284,114 @@ const formatDateTime = (dateStr?: string) => {
   padding: 0 var(--space-sm);
 }
 
+.results-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .results-count {
   color: var(--text-secondary);
   font-size: var(--text-body);
 }
 
+.match-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.match-type-badge.semantic {
+  background: #e3f2fd;
+  color: #1976d2;
+}
+
+.match-type-badge.time {
+  background: #fff3e0;
+  color: #f57c00;
+}
+
+.match-type-badge.location {
+  background: #e8f5e9;
+  color: #388e3c;
+}
+
+.match-type-badge.combined {
+  background: linear-gradient(135deg, #fff3e0 0%, #e3f2fd 100%);
+  color: #666;
+}
+
+.match-type-badge.keyword {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.match-type-badge.person {
+  background: #fce4ec;
+  color: #c2185b;
+}
+
 .search-time {
   font-size: var(--text-small);
   color: var(--text-tertiary);
+}
+
+/* Person not found state */
+.person-not-found {
+  margin-top: var(--space-2xl);
+}
+
+/* No results with hot search suggestions */
+.no-results {
+  margin-top: var(--space-xl);
+}
+
+.hot-search-suggestions {
+  margin-top: var(--space-xl);
+  text-align: center;
+}
+
+.suggestions-title {
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-md);
+}
+
+.hot-search-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.hot-search-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  font-size: 14px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hot-search-tag:hover {
+  background: var(--primary-light);
+  border-color: var(--primary-default);
+  color: var(--primary-default);
+  transform: translateY(-1px);
+}
+
+.tag-icon {
+  font-size: 16px;
 }
 
 /* ================================
