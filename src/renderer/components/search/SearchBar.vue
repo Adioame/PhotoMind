@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useSearchStore, type SearchMode, type SearchSuggestion } from '@/stores/searchStore'
+import { useSearchStore, type SearchMode, type SearchSuggestion, HOT_SEARCHES, SEARCH_TIPS } from '@/stores/searchStore'
 import { useDebounceFn } from '@vueuse/core'
 
 // Props
@@ -64,9 +64,24 @@ const currentMode = computed({
   }
 })
 
-const showSuggestions = computed(() => {
+// 是否显示实时搜索建议（有输入时）
+const showRealtimeSuggestions = computed(() => {
   if (!props.showSuggestions) return false
-  return isFocused.value && (suggestions.value.length > 0 || recentSearches.value.length > 0)
+  return isFocused.value && localQuery.value.length > 0 && suggestions.value.length > 0
+})
+
+// 是否显示搜索建议面板（包括热门搜索、提示等）
+const showSuggestionsPanel = computed(() => {
+  if (!props.showSuggestions) return false
+  if (!isFocused.value) return false
+
+  // 有输入时显示实时建议
+  if (localQuery.value.length > 0) {
+    return suggestions.value.length > 0
+  }
+
+  // 无输入时显示热门搜索和提示
+  return true
 })
 
 const displayedSuggestions = computed(() => {
@@ -154,6 +169,12 @@ const selectSuggestion = (item: SearchSuggestion | string) => {
   localQuery.value = text
   selectedSuggestionIndex.value = -1
   searchStore.suggestions = []
+  executeSearch()
+}
+
+// 选择热门搜索
+const selectHotSearch = (suggestion: SearchSuggestion) => {
+  localQuery.value = suggestion.text
   executeSearch()
 }
 
@@ -250,10 +271,50 @@ watch(() => searchStore.query, (newQuery) => {
 
     <!-- 搜索建议 -->
     <Transition name="slide-up">
-      <div v-if="showSuggestions" class="suggestions-panel">
-        <!-- 历史记录 -->
+      <div v-if="showSuggestionsPanel" class="suggestions-panel">
+        <!-- 热门搜索（无输入时显示） -->
+        <div v-if="!localQuery" class="suggestion-section hot-searches">
+          <div class="section-title">
+            <span class="title-icon">🔥</span>
+            热门搜索
+          </div>
+          <div class="hot-search-tags">
+            <button
+              v-for="(suggestion, index) in HOT_SEARCHES"
+              :key="'hot-' + index"
+              class="hot-search-tag"
+              @mousedown.prevent="selectHotSearch(suggestion)"
+            >
+              <span class="tag-icon">{{ suggestion.icon }}</span>
+              <span class="tag-text">{{ suggestion.text }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 搜索提示（无输入时显示） -->
+        <div v-if="!localQuery" class="suggestion-section search-tips">
+          <div class="section-title">
+            <span class="title-icon">💡</span>
+            搜索提示
+          </div>
+          <div class="tip-items">
+            <div
+              v-for="(tip, index) in SEARCH_TIPS"
+              :key="'tip-' + index"
+              class="tip-item"
+            >
+              <span class="tip-icon">{{ tip.icon }}</span>
+              <span class="tip-text">{{ tip.text }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 历史记录（无查询时显示） -->
         <div v-if="recentSearches.length > 0 && !localQuery" class="suggestion-section">
-          <div class="section-title">最近搜索</div>
+          <div class="section-title">
+            <span class="title-icon">🕐</span>
+            最近搜索
+          </div>
           <div
             v-for="(search, index) in recentSearches.slice(0, 5)"
             :key="'history-' + index"
@@ -269,13 +330,13 @@ watch(() => searchStore.query, (newQuery) => {
         </div>
 
         <!-- 实时建议 -->
-        <div v-if="suggestions.length > 0" class="suggestion-section">
+        <div v-if="suggestions.length > 0 && localQuery" class="suggestion-section">
           <div class="section-title">建议</div>
           <div
             v-for="(suggestion, index) in suggestions"
             :key="'suggestion-' + index"
             class="suggestion-item"
-            :class="{ selected: selectedSuggestionIndex === recentSearches.length + index }"
+            :class="{ selected: selectedSuggestionIndex === index }"
             @mousedown="selectSuggestion(suggestion)"
           >
             <svg v-if="suggestion.type === 'person'" class="suggestion-icon" viewBox="0 0 24 24">
@@ -442,10 +503,89 @@ watch(() => searchStore.query, (newQuery) => {
 }
 
 .section-title {
-  padding: 4px 16px;
+  padding: 8px 16px;
   font-size: 12px;
-  color: var(--text-tertiary, #999);
+  font-weight: 600;
+  color: var(--text-secondary, #666);
   text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.title-icon {
+  font-size: 14px;
+}
+
+/* Hot searches */
+.hot-searches {
+  padding: 8px 0;
+}
+
+.hot-search-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 16px 12px;
+}
+
+.hot-search-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--bg-secondary, #f5f5f5);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 16px;
+  font-size: 13px;
+  color: var(--text-primary, #333);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hot-search-tag:hover {
+  background: var(--primary-light, #e3f2fd);
+  border-color: var(--primary-color, #007aff);
+  color: var(--primary-color, #007aff);
+}
+
+.tag-icon {
+  font-size: 14px;
+}
+
+.tag-text {
+  white-space: nowrap;
+}
+
+/* Search tips */
+.search-tips {
+  padding: 8px 0;
+  background: linear-gradient(to right, rgba(255, 243, 224, 0.3), rgba(255, 248, 225, 0.3));
+}
+
+.tip-items {
+  padding: 4px 16px 8px;
+}
+
+.tip-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  line-height: 1.5;
+}
+
+.tip-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.tip-text {
+  flex: 1;
 }
 
 .suggestion-item {

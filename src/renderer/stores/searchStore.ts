@@ -14,9 +14,31 @@ export type SearchMode = 'keyword' | 'semantic' | 'hybrid'
 
 export interface SearchSuggestion {
   text: string
-  type: 'person' | 'keyword' | 'location' | 'time' | 'album'
+  type: 'person' | 'keyword' | 'location' | 'time' | 'album' | 'hot' | 'tip'
   icon?: string
+  description?: string
 }
+
+// 热门搜索配置
+export const HOT_SEARCHES: SearchSuggestion[] = [
+  { text: '海边的照片', type: 'hot', icon: '🏖️', description: '场景搜索' },
+  { text: '夕阳', type: 'hot', icon: '🌅', description: '场景搜索' },
+  { text: '去年的照片', type: 'hot', icon: '📅', description: '时间搜索' },
+  { text: '2024年春节', type: 'hot', icon: '🧧', description: '时间搜索' },
+  { text: '在北京拍的', type: 'hot', icon: '📍', description: '地点搜索' },
+  { text: '山景', type: 'hot', icon: '⛰️', description: '场景搜索' },
+  { text: '雪景', type: 'hot', icon: '❄️', description: '场景搜索' },
+  { text: '美食', type: 'hot', icon: '🍜', description: '场景搜索' }
+]
+
+// 搜索提示配置
+export const SEARCH_TIPS = [
+  { icon: '💡', text: '试试：场景、时间、地点组合搜索' },
+  { icon: '🎯', text: '输入"去年在海边"查找特定时间地点的照片' },
+  { icon: '🔍', text: '使用自然语言描述你想找的照片' }
+]
+
+export type MatchType = 'semantic' | 'time' | 'location' | 'combined' | 'keyword' | 'person' | 'none'
 
 export interface SearchState {
   query: string
@@ -31,6 +53,10 @@ export interface SearchState {
   searchTime: number
   hasSearched: boolean
   filters: Record<string, any>
+  matchType: MatchType
+  matchTypeLabel: string
+  emptyStateType: 'none' | 'person_not_found' | 'no_results' | null
+  emptyStateData: Record<string, any> | null
 }
 
 export const useSearchStore = defineStore('search', {
@@ -46,7 +72,11 @@ export const useSearchStore = defineStore('search', {
     totalResults: 0,
     searchTime: 0,
     hasSearched: false,
-    filters: {}
+    filters: {},
+    matchType: 'none',
+    matchTypeLabel: '',
+    emptyStateType: null,
+    emptyStateData: null
   }),
 
   getters: {
@@ -217,6 +247,8 @@ export const useSearchStore = defineStore('search', {
       this.isSearching = true
       this.searchProgress = 0
       this.hasSearched = true
+      this.emptyStateType = null
+      this.emptyStateData = null
 
       const startTime = performance.now()
 
@@ -228,8 +260,19 @@ export const useSearchStore = defineStore('search', {
         this.searchTime = Math.round(performance.now() - startTime)
         this.searchProgress = 100
 
+        // 设置匹配类型
+        this.setMatchType(result.matchType || result.intent?.type || 'mixed', result)
+
+        // 处理人物未找到的情况
+        if (result.emptyState) {
+          this.emptyStateType = result.emptyState.type
+          this.emptyStateData = result.emptyState
+        }
+
         // 添加到历史
-        this.addToHistory(this.query)
+        if (this.results.length > 0) {
+          this.addToHistory(this.query)
+        }
 
         return result
       } catch (error) {
@@ -238,6 +281,49 @@ export const useSearchStore = defineStore('search', {
         return this.search()
       } finally {
         this.isSearching = false
+      }
+    },
+
+    // 设置匹配类型
+    setMatchType(intentType: string, result: any) {
+      const stats = result.stats || {}
+      const hasKeyword = stats.keywordCount > 0
+      const hasSemantic = stats.semanticCount > 0
+
+      // 根据意图和统计确定匹配类型
+      switch (intentType) {
+        case 'time':
+          this.matchType = 'time'
+          this.matchTypeLabel = '时间匹配'
+          break
+        case 'location':
+          this.matchType = 'location'
+          this.matchTypeLabel = '地点匹配'
+          break
+        case 'semantic':
+          this.matchType = 'semantic'
+          this.matchTypeLabel = '语义匹配'
+          break
+        case 'people':
+          this.matchType = 'person'
+          this.matchTypeLabel = '人物匹配'
+          break
+        case 'mixed':
+        case 'keyword':
+        default:
+          if (hasKeyword && hasSemantic) {
+            this.matchType = 'combined'
+            this.matchTypeLabel = '时间 + 语义匹配'
+          } else if (hasSemantic) {
+            this.matchType = 'semantic'
+            this.matchTypeLabel = '语义匹配'
+          } else if (hasKeyword) {
+            this.matchType = 'keyword'
+            this.matchTypeLabel = '关键词匹配'
+          } else {
+            this.matchType = 'none'
+            this.matchTypeLabel = ''
+          }
       }
     },
 
@@ -313,6 +399,10 @@ export const useSearchStore = defineStore('search', {
       this.searchTime = 0
       this.searchProgress = 0
       this.filters = {}
+      this.matchType = 'none'
+      this.matchTypeLabel = ''
+      this.emptyStateType = null
+      this.emptyStateData = null
     },
 
     // 重置状态
@@ -325,6 +415,10 @@ export const useSearchStore = defineStore('search', {
       this.totalResults = 0
       this.hasSearched = false
       this.filters = {}
+      this.matchType = 'none'
+      this.matchTypeLabel = ''
+      this.emptyStateType = null
+      this.emptyStateData = null
     }
   }
 })
