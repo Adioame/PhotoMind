@@ -162,7 +162,7 @@ onUnmounted(() => {
             v-if="item.thumbnailPath || item.filePath"
             :src="getPhotoUrl(item)"
             :alt="item.fileName"
-            loading="lazy"
+            loading="eager"
           />
           <div v-else class="thumbnail-placeholder">
             <svg viewBox="0 0 24 24">

@@ -47,7 +47,7 @@
             :src="getPhotoUrl(photo)"
             :alt="photo.fileName"
             object-fit="cover"
-            lazy
+            :img-props="{ loading: 'eager' }"
             class="photo-image"
             preview-disabled
             @error="(e) => handleImageError(e, photo)"
