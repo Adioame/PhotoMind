@@ -1,8 +1,8 @@
 /**
  * PhotoMind - 预加载脚本
  */
-// 使用 CommonJS 格式，因为 Electron preload 需要
-const { contextBridge, ipcRenderer } = require('electron')
+// 使用 ES Module 格式
+import { contextBridge, ipcRenderer } from 'electron'
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('photoAPI', {
