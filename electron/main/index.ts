@@ -20,7 +20,26 @@ import { thumbnailService } from '../services/thumbnailService.js'
 import { suggestionService } from '../services/searchSuggestionService.js'
 import { initializeScanJobService, scanJobService, ScanJob } from '../services/scanJobService.js'
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
+// 安全获取 __dirname - 兼容 Electron Forge 构建环境
+const __dirname = (() => {
+  try {
+    // Electron Forge Vite 插件会设置一些环境变量
+    // 检查是否在开发模式
+    if (process.env.VITE_DEV_SERVER_URL) {
+      // 开发模式：使用 import.meta.url
+      return fileURLToPath(new URL('.', import.meta.url))
+    }
+  } catch {
+    // 忽略错误
+  }
+  // 生产模式或构建后：使用 process.cwd() 或 app.getAppPath()
+  return process.cwd()
+})()
+
+// ==================== Electron-Forge 注入的常量 ====================
+// Forge 在构建时会自动注入这些常量
+declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined
+declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string | undefined
 
 // 🆕 全局存储活跃扫描任务（用于前端恢复）
 declare global {
@@ -73,20 +92,26 @@ function registerLocalResourceProtocol() {
   console.log('✓ 自定义协议 local-resource:// 已注册')
 }
 
-// 路径辅助函数
+// 路径辅助函数 - 适配 Electron-Forge
 function getRendererPath(): string {
+  // 开发模式：使用 Forge 提供的 Dev Server URL
   if (isDev) {
-    return 'http://localhost:5177'
+    if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined') {
+      return MAIN_WINDOW_VITE_DEV_SERVER_URL
+    }
+    return 'http://localhost:5173'
   }
   // 生产模式：从资源目录加载
   return resolve(process.resourcesPath, 'renderer/index.html')
 }
 
 function getPreloadPath(): string {
-  if (isDev) {
-    return resolve(__dirname, '../preload/index.js')
+  // Forge Vite 插件会自动处理 preload 路径
+  if (typeof MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY !== 'undefined') {
+    return MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY
   }
-  return resolve(process.resourcesPath, 'preload/index.js')
+  // 开发模式回退路径 - 使用 .vite/build/preload 目录
+  return resolve(process.cwd(), '.vite/build/preload/index.js')
 }
 
 function createWindow() {
@@ -150,18 +175,37 @@ function createWindow() {
   }
 
   // 开发模式加载本地服务器，生产模式加载构建文件
+  const rendererUrl = getRendererPath()
+  console.log('[Main] Loading renderer from:', rendererUrl)
+
+  mainWindow.loadURL(rendererUrl).catch(err => {
+    console.error('[Main] Failed to load URL:', err)
+  })
+
+  // 开发模式打开 DevTools
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5177')
-    // 主窗口打开 DevTools
     mainWindow.webContents.openDevTools({ mode: 'detach' })
-  } else {
-    mainWindow.loadFile(getRendererPath())
   }
 
-  mainWindow.on('ready-to-show', () => {
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Main] Window ready to show')
     mainWindow?.show()
     mainWindow?.focus()
   })
+
+  // 处理加载失败
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[Main] Failed to load:', errorCode, errorDescription)
+  })
+
+  // 强制显示窗口（如果 3 秒后还没有显示）
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      console.log('[Main] Force showing window after 3s')
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  }, 3000)
 
   // 处理外部链接
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

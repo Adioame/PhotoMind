@@ -57,12 +57,18 @@ export class PhotoDatabase {
         }
       }
 
-      // 验证数据库是否有数据
-      const checkResult = this.db.exec('SELECT COUNT(*) as count FROM photos')
-      console.log('[Database] Initial photo count:', checkResult[0]?.values[0]?.[0])
-
+      // 创建表（如果表不存在）
       this.createTables()
       console.log('[Database] Tables created/verified')
+
+      // 验证数据库是否有数据
+      try {
+        const checkResult = this.db.exec('SELECT COUNT(*) as count FROM photos')
+        console.log('[Database] Initial photo count:', checkResult[0]?.values[0]?.[0])
+      } catch (e) {
+        console.log('[Database] Could not count photos (table may be empty)')
+      }
+
       this.save()
       console.log('[Database] DB saved')
     } catch (error) {
@@ -73,6 +79,9 @@ export class PhotoDatabase {
         const SqlJs = await initSqlJs()
         const SQL = SqlJs.default || SqlJs
         this.db = new SQL.Database ? new SQL.Database() : new SQL.PhotoDatabase()
+        // 【关键】内存数据库也需要创建表！
+        this.createTables()
+        console.log('[Database] Memory DB tables created')
       } catch (e) {
         console.error('内存数据库也无法创建:', e)
       }
