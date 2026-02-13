@@ -1,1 +1,29 @@
 node_modules
+
+# Build outputs
+.vite/
+dist-electron/
+dist-renderer/
+out/
+
+# Cache and temp files
+.cache/
+data/cache/
+*.log
+
+# Database backups
+*.db.backup-*
+*.db-journal
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test coverage
+coverage/
