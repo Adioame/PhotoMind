@@ -61,8 +61,9 @@ import type { SearchSuggestionService } from '../services/searchSuggestionServic
 let thumbnailSvc: ThumbnailService | null = null
 let suggestionSvc: SearchSuggestionService | null = null
 
-// 开发模式：通过 npm script 运行 electron 时默认为开发模式
-const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev' || !process.env.NODE_ENV
+// 开发模式：通过 app.isPackaged 判断（Electron 标准方式）
+// 打包后为 false，开发时为 true
+const isDev = !app.isPackaged
 
 // ==================== 自定义协议注册 ====================
 
@@ -108,12 +109,19 @@ function getRendererPath(): string {
   // 开发模式：使用 Forge 提供的 Dev Server URL
   if (isDev) {
     if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined') {
+      console.log('[Main] 开发模式：使用 Forge URL:', MAIN_WINDOW_VITE_DEV_SERVER_URL)
       return MAIN_WINDOW_VITE_DEV_SERVER_URL
     }
-    return 'http://localhost:5173'
+    // 从环境变量获取端口，默认 5173
+    const port = process.env.VITE_DEV_SERVER_PORT || '5173'
+    console.log('[Main] 开发模式：使用 localhost:', port)
+    return `http://localhost:${port}`
   }
-  // 生产模式：从资源目录加载
-  return resolve(process.resourcesPath, 'renderer/index.html')
+  // 生产模式：从构建目录加载
+  // Electron Forge Vite 构建后，renderer 在 app.asar 内
+  const prodPath = resolve(__dirname, '../../renderer/main_window/index.html')
+  console.log('[Main] 生产模式：加载本地文件:', prodPath)
+  return prodPath
 }
 
 function getPreloadPath(): string {

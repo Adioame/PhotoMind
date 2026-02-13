@@ -450,10 +450,33 @@ watch(() => scanState.value, async (newState, oldState) => {
 
 // 初始化
 onMounted(() => {
-  peopleStore.fetchPeople()
-  loadUnnamedFaces()
+  console.log('[PeopleView] ========== 组件挂载开始 ==========')
+  console.log('[PeopleView] peopleStore:', peopleStore)
+  console.log('[PeopleView] scanStore:', scanStore)
+
+  try {
+    peopleStore.fetchPeople()
+    console.log('[PeopleView] fetchPeople() 已调用')
+  } catch (e) {
+    console.error('[PeopleView] fetchPeople() 失败:', e)
+  }
+
+  try {
+    loadUnnamedFaces()
+    console.log('[PeopleView] loadUnnamedFaces() 已调用')
+  } catch (e) {
+    console.error('[PeopleView] loadUnnamedFaces() 失败:', e)
+  }
+
   // 确保扫描状态可见性正确
-  scanStore.showProgressIfActive()
+  try {
+    scanStore.showProgressIfActive()
+    console.log('[PeopleView] showProgressIfActive() 已调用')
+  } catch (e) {
+    console.error('[PeopleView] showProgressIfActive() 失败:', e)
+  }
+
+  console.log('[PeopleView] ========== 组件挂载完成 ==========')
 
   // 🆕 监听人物更新事件（聚类完成后自动刷新）
   const unsubscribePeopleUpdated = (window as any).photoAPI?.face?.onPeopleUpdated?.(() => {

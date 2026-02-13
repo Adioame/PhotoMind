@@ -32,6 +32,7 @@
           :to="item.path"
           class="nav-item"
           :class="{ active: isActive(item.path) }"
+          @click="handleNavClick(item.path)"
         >
           <n-icon class="nav-icon" size="20">
             <component :is="item.icon" />
@@ -115,6 +116,11 @@ const isActive = (path: string): boolean => {
     return route.path === '/'
   }
   return route.path.startsWith(path) && !/^\/photo\/\w+/.test(route.path)
+}
+
+// 调试：监听导航点击
+const handleNavClick = (path: string) => {
+  console.log('[GlobalNav] 点击导航:', path, '当前路由:', route.path)
 }
 
 const goHome = () => {
