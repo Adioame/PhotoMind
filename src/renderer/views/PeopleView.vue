@@ -195,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, onActivated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowSync24Regular, Scan24Regular, People24Regular } from '@vicons/fluent'
 import { useMessage } from 'naive-ui'
@@ -233,13 +233,27 @@ const namingDialog = reactive({
 // 加载未命名人脸
 const loadUnnamedFaces = async () => {
   try {
-    const result = await (window as any).photoAPI?.face?.getUnnamedFaces?.(50)
+    console.log('[PeopleView] 开始加载未命名人脸...')
+    // 关键：确保API返回所有待识别人脸，而不是仅10个
+    const result = await (window as any).photoAPI?.face?.getUnnamedFaces?.(100)
+    console.log('[PeopleView] API返回:', result)
+
     if (result) {
       unnamedFaces.value = result.faces || []
-      unnamedFaceCount.value = result.count || 0
+      // 使用total字段或计算实际长度
+      unnamedFaceCount.value = result.total || result.count || result.faces?.length || 0
+
+      console.log('[PeopleView] 未命名人脸数量:', unnamedFaceCount.value, '列表长度:', unnamedFaces.value.length)
+
+      // 关键：如果前端显示与数据库不符，以数据库为准
+      if (unnamedFaceCount.value !== result.count && result.count !== undefined) {
+        console.warn('[PeopleView] 数量不匹配，使用API返回的count:', result.count)
+        unnamedFaceCount.value = result.count
+      }
     }
   } catch (error) {
     console.error('[PeopleView] 加载未命名人脸失败:', error)
+    message.error('加载人脸数据失败')
   }
 }
 
@@ -325,6 +339,20 @@ const handleScanFaces = async () => {
 // 自动识别人物
 const handleAutoMatch = async () => {
   autoMatching.value = true
+
+  // 关键：每次点击前强制从后端获取最新数据
+  console.log('[PeopleView] 自动识别点击，强制刷新数据...')
+  await loadUnnamedFaces()
+
+  console.log('[PeopleView] 自动识别点击，当前待识别人脸:', unnamedFaces.value.length)
+
+  // 如果刷新后没有待识别人脸，提示用户
+  if (!unnamedFaces.value || unnamedFaces.value.length === 0) {
+    message.info('没有新的面孔需要识别')
+    autoMatching.value = false
+    return
+  }
+
   try {
     const result = await (window as any).photoAPI?.faceMatching?.autoMatch?.()
     if (result?.personsCreated > 0) {
@@ -490,6 +518,13 @@ onMounted(() => {
   return () => {
     unsubscribePeopleUpdated?.()
   }
+})
+
+// 🆕 页面激活时强制刷新数据（解决缓存不一致问题）
+onActivated(async () => {
+  console.log('[PeopleView] 页面激活，强制刷新数据')
+  await loadUnnamedFaces()
+  console.log('[PeopleView] 页面激活刷新完成，待识别人脸:', unnamedFaces.value.length)
 })
 </script>
 

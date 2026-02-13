@@ -36,6 +36,7 @@ export interface PhotoDetail {
     id: number
     name: string
   }>
+  status?: string
 }
 
 export const usePhotoDetailStore = defineStore('photoDetail', () => {
@@ -71,18 +72,60 @@ export const usePhotoDetailStore = defineStore('photoDetail', () => {
 
   // Actions
   async function loadPhoto(id: string): Promise<void> {
+    console.log('[photoDetailStore.loadPhoto] 开始加载照片, ID:', id, '类型:', typeof id)
     loading.value = true
+    photo.value = null
+
     try {
-      const response = await (window as any).photoAPI?.photos?.getDetail(id)
-      photo.value = response || null
+      // 检查 API 是否可用
+      const api = (window as any).photoAPI?.photos
+      console.log('[photoDetailStore.loadPhoto] API 对象:', api ? '可用' : '不可用')
+
+      if (!api?.getDetail) {
+        console.error('[photoDetailStore.loadPhoto] getDetail API 不可用')
+        photo.value = null
+        return
+      }
+
+      console.log('[photoDetailStore.loadPhoto] 调用 API.getDetail...')
+      const response = await api.getDetail(id)
+
+      console.log('[photoDetailStore.loadPhoto] API 返回:', response)
+
+      if (!response) {
+        console.error('[photoDetailStore.loadPhoto] API 返回 null/undefined')
+        photo.value = null
+        return
+      }
+
+      // 统一字段映射：将下划线命名转换为驼峰命名
+      photo.value = {
+        id: response.id,
+        uuid: response.uuid,
+        fileName: response.fileName || response.file_name,
+        filePath: response.filePath || response.file_path,
+        thumbnailPath: response.thumbnailPath || response.thumbnail_path || response.thumbnail_url,
+        takenAt: response.takenAt || response.taken_at,
+        width: response.width,
+        height: response.height,
+        fileSize: response.fileSize || response.file_size,
+        location: response.location,
+        metadata: response.exif || response.metadata,
+        persons: response.persons,
+        status: response.status
+      }
+
+      console.log('[photoDetailStore.loadPhoto] 照片加载成功:', photo.value?.id)
+
       if (photo.value) {
         await loadSimilarPhotos(id)
       }
     } catch (error) {
-      console.error('Failed to load photo:', error)
+      console.error('[photoDetailStore.loadPhoto] 加载失败:', error)
       photo.value = null
     } finally {
       loading.value = false
+      console.log('[photoDetailStore.loadPhoto] 加载完成, loading:', loading.value)
     }
   }
 

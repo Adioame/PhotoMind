@@ -10,35 +10,35 @@
     </div>
 
     <!-- 加载状态 -->
-    <div class="loading-state" v-if="photoStore.loading">
+    <div class="loading-state" v-if="loading">
       <n-spin size="large" />
       <p>加载照片信息...</p>
     </div>
 
     <!-- 照片内容 -->
-    <template v-else-if="photoStore.photo">
+    <template v-else-if="currentPhoto">
       <div class="photo-content">
         <!-- 图片预览区 -->
         <div class="image-viewer">
           <n-image
-            :src="getPhotoUrl(photoStore.photo)"
-            :preview-src="getPhotoUrl(photoStore.photo)"
+            :src="getPhotoUrl(currentPhoto)"
+            :preview-src="getPhotoUrl(currentPhoto)"
             object-fit="contain"
             style="width: 100%; height: 100%;"
           />
 
           <!-- 导航按钮 -->
           <button
-            v-if="!photoStore.isFirst"
+            v-if="hasPrev"
             class="nav-btn prev"
-            @click="photoStore.navigateTo('prev')"
+            @click="navigateTo('prev')"
           >
             <ChevronLeft24Regular />
           </button>
           <button
-            v-if="!photoStore.isLast"
+            v-if="hasNext"
             class="nav-btn next"
-            @click="photoStore.navigateTo('next')"
+            @click="navigateTo('next')"
           >
             <ChevronRight24Regular />
           </button>
@@ -57,7 +57,7 @@
         <!-- 信息面板 -->
         <div class="info-panel">
           <div class="panel-header">
-            <h2>{{ photoStore.photo.fileName }}</h2>
+            <h2>{{ currentPhoto.fileName || currentPhoto.file_name }}</h2>
             <n-button text circle @click="goBack">
               <template #icon>
                 <n-icon size="20"><Dismiss24Regular /></n-icon>
@@ -67,46 +67,46 @@
 
           <div class="photo-meta">
             <!-- 拍摄时间 -->
-            <div class="meta-item" v-if="photoStore.photo.takenAt">
+            <div class="meta-item" v-if="currentPhoto.takenAt || currentPhoto.taken_at">
               <n-icon size="20" color="#0071E3">
                 <CalendarToday24Regular />
               </n-icon>
               <div class="meta-content">
                 <span class="meta-label">拍摄时间</span>
-                <span class="meta-value">{{ formatDateTime(photoStore.photo.takenAt) }}</span>
+                <span class="meta-value">{{ formatDateTime(currentPhoto.takenAt || currentPhoto.taken_at) }}</span>
               </div>
             </div>
 
             <!-- 地点 -->
-            <div class="meta-item" v-if="photoStore.photo.location?.name">
+            <div class="meta-item" v-if="currentPhoto.location?.name">
               <n-icon size="20" color="#0071E3">
                 <Location24Regular />
               </n-icon>
               <div class="meta-content">
                 <span class="meta-label">拍摄地点</span>
-                <span class="meta-value">{{ photoStore.photo.location.name }}</span>
+                <span class="meta-value">{{ currentPhoto.location.name }}</span>
               </div>
             </div>
 
             <!-- 尺寸 -->
-            <div class="meta-item" v-if="photoStore.photo.width">
+            <div class="meta-item" v-if="currentPhoto.width">
               <n-icon size="20" color="#0071E3">
                 <Image24Regular />
               </n-icon>
               <div class="meta-content">
                 <span class="meta-label">照片尺寸</span>
-                <span class="meta-value">{{ photoStore.photo.width }} x {{ photoStore.photo.height }}</span>
+                <span class="meta-value">{{ currentPhoto.width }} x {{ currentPhoto.height }}</span>
               </div>
             </div>
 
             <!-- 文件大小 -->
-            <div class="meta-item" v-if="photoStore.photo.fileSize">
+            <div class="meta-item" v-if="currentPhoto.fileSize || currentPhoto.file_size">
               <n-icon size="20" color="#0071E3">
                 <Document24Regular />
               </n-icon>
               <div class="meta-content">
                 <span class="meta-label">文件大小</span>
-                <span class="meta-value">{{ formatFileSize(photoStore.photo.fileSize) }}</span>
+                <span class="meta-value">{{ formatFileSize(currentPhoto.fileSize || currentPhoto.file_size) }}</span>
               </div>
             </div>
           </div>
@@ -115,34 +115,34 @@
           <n-collapse v-if="hasExifData">
             <n-collapse-item title="EXIF 信息" name="exif">
               <n-descriptions :column="1" label-placement="left">
-                <n-descriptions-item label="相机" v-if="photoStore.photo.metadata?.camera">
-                  {{ photoStore.photo.metadata.camera }}
+                <n-descriptions-item label="相机" v-if="currentPhoto.metadata?.camera">
+                  {{ currentPhoto.metadata.camera }}
                 </n-descriptions-item>
-                <n-descriptions-item label="镜头" v-if="photoStore.photo.metadata?.lens">
-                  {{ photoStore.photo.metadata.lens }}
+                <n-descriptions-item label="镜头" v-if="currentPhoto.metadata?.lens">
+                  {{ currentPhoto.metadata.lens }}
                 </n-descriptions-item>
-                <n-descriptions-item label="光圈" v-if="photoStore.photo.metadata?.aperture">
-                  f/{{ photoStore.photo.metadata.aperture }}
+                <n-descriptions-item label="光圈" v-if="currentPhoto.metadata?.aperture">
+                  f/{{ currentPhoto.metadata.aperture }}
                 </n-descriptions-item>
-                <n-descriptions-item label="ISO" v-if="photoStore.photo.metadata?.iso">
-                  {{ photoStore.photo.metadata.iso }}
+                <n-descriptions-item label="ISO" v-if="currentPhoto.metadata?.iso">
+                  {{ currentPhoto.metadata.iso }}
                 </n-descriptions-item>
-                <n-descriptions-item label="快门速度" v-if="photoStore.photo.metadata?.shutterSpeed">
-                  {{ photoStore.photo.metadata.shutterSpeed }}s
+                <n-descriptions-item label="快门速度" v-if="currentPhoto.metadata?.shutterSpeed">
+                  {{ currentPhoto.metadata.shutterSpeed }}s
                 </n-descriptions-item>
-                <n-descriptions-item label="焦距" v-if="photoStore.photo.metadata?.focalLength">
-                  {{ photoStore.photo.metadata.focalLength }}mm
+                <n-descriptions-item label="焦距" v-if="currentPhoto.metadata?.focalLength">
+                  {{ currentPhoto.metadata.focalLength }}mm
                 </n-descriptions-item>
               </n-descriptions>
             </n-collapse-item>
           </n-collapse>
 
           <!-- 人物标签 -->
-          <div v-if="photoStore.photo.persons?.length" class="persons-section">
+          <div v-if="currentPhoto.persons?.length" class="persons-section">
             <h3>人物</h3>
             <div class="persons-tags">
               <n-tag
-                v-for="person in photoStore.photo.persons"
+                v-for="person in currentPhoto.persons"
                 :key="person.id"
                 round
                 size="medium"
@@ -198,12 +198,24 @@
       </div>
     </template>
 
-    <!-- 空状态 -->
+    <!-- 错误状态 -->
+    <EmptyState
+      v-else-if="error"
+      type="error"
+      :title="error"
+      description="该照片可能已被删除或不存在"
+      :primary-action="{
+        label: '返回',
+        onClick: goBack
+      }"
+    />
+
+    <!-- 空状态（无数据） -->
     <EmptyState
       v-else
-      type="error"
-      title="照片不存在"
-      description="该照片可能已被删除或不存在"
+      type="empty"
+      title="无照片数据"
+      description="请选择一张照片查看"
       :primary-action="{
         label: '返回',
         onClick: goBack
@@ -213,7 +225,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   Dismiss24Regular,
@@ -233,7 +245,7 @@ import {
   ImageMultiple24Regular
 } from '@vicons/fluent'
 import { useMessage, useDialog } from 'naive-ui'
-import { usePhotoDetailStore } from '@/stores/photoDetailStore'
+import { usePhotoStore } from '@/stores/photoStore'
 import { toLocalResourceProtocol } from '@/utils/localResource'
 import EmptyState from '@/components/EmptyState.vue'
 import BreadcrumbNav, { type BreadcrumbItem } from '@/components/nav/BreadcrumbNav.vue'
@@ -242,25 +254,107 @@ const router = useRouter()
 const route = useRoute()
 const message = useMessage()
 const dialog = useDialog()
-const photoStore = usePhotoDetailStore()
+const photoStore = usePhotoStore()
+
+// 当前照片状态
+const currentPhoto = ref<any>(null)
+const loading = ref(false)
+const error = ref('')
 
 // 全屏状态
 const isFullscreen = ref(false)
 
-// 获取照片 URL
-const getPhotoUrl = (photo: any) => {
-  const path = photo.thumbnailPath || photo.thumbnail_url || photo.filePath
-  if (path && (path.startsWith('/') || /^[a-z]:/i.test(path))) {
-    return toLocalResourceProtocol(path)
+// 统一字段映射：将数据库下划线命名转换为前端驼峰命名
+const normalizePhotoFields = (photo: any) => {
+  if (!photo) return null
+
+  return {
+    ...photo,
+    // 统一转换为驼峰命名（前端标准）
+    filePath: photo.filePath || photo.file_path,
+    thumbnailPath: photo.thumbnailPath || photo.thumbnail_path || photo.thumbnail_url,
+    // 保留原始字段以防万一
+    file_path: photo.file_path || photo.filePath,
+    thumbnail_path: photo.thumbnail_path || photo.thumbnailPath,
   }
-  return path || ''
+}
+
+// 获取照片 URL - 优先使用原图，回退缩略图
+const getPhotoUrl = (photo: any) => {
+  if (!photo) return ''
+
+  // 先统一字段映射
+  const normalizedPhoto = normalizePhotoFields(photo)
+
+  // 尝试所有可能的路径字段（按优先级）
+  const possiblePaths = [
+    normalizedPhoto.filePath,           // 驼峰原图
+    normalizedPhoto.file_path,          // 下划线原图
+    normalizedPhoto.thumbnailPath,      // 驼峰缩略图
+    normalizedPhoto.thumbnail_path,     // 下划线缩略图
+    normalizedPhoto.thumbnail_url,      // 其他命名
+  ]
+
+  // 找到第一个有效的
+  const validPath = possiblePaths.find(p => p && typeof p === 'string' && p.length > 0)
+
+  if (!validPath) {
+    console.error('[PhotoDetailView] 未找到任何有效路径，照片对象:', photo)
+    return ''
+  }
+
+  console.log('[PhotoDetailView] 使用路径:', validPath)
+
+  if (validPath && (validPath.startsWith('/') || /^[a-z]:/i.test(validPath))) {
+    const url = toLocalResourceProtocol(validPath)
+    console.log('[PhotoDetailView] 生成URL:', url)
+    return url
+  }
+
+  return validPath || ''
+}
+
+// 图片加载错误处理
+const imageError = ref(false)
+const currentImageUrl = ref('')
+
+const handleImageError = () => {
+  console.error('[PhotoDetailView] 图片加载失败，尝试缩略图')
+  const thumbnailPath = currentPhoto.value?.thumbnailPath || currentPhoto.value?.thumbnail_path
+  if (thumbnailPath) {
+    currentImageUrl.value = toLocalResourceProtocol(thumbnailPath)
+    imageError.value = false
+  } else {
+    imageError.value = true
+  }
 }
 
 // 检查是否有 EXIF 数据
 const hasExifData = computed(() => {
-  const meta = photoStore.photo?.metadata
+  const meta = currentPhoto.value?.metadata || currentPhoto.value?.exif
   return !!(meta?.camera || meta?.lens || meta?.aperture || meta?.iso || meta?.shutterSpeed)
 })
+
+// 导航状态
+const currentIndex = computed(() => {
+  return photoStore.photos.findIndex(p => String(p.id) === String(route.params.id))
+})
+
+const hasPrev = computed(() => currentIndex.value > 0)
+const hasNext = computed(() => currentIndex.value < photoStore.photos.length - 1)
+
+const navigateTo = (direction: 'prev' | 'next') => {
+  const currentIdx = currentIndex.value
+  if (currentIdx === -1) return
+
+  const newIndex = direction === 'prev' ? currentIdx - 1 : currentIdx + 1
+  if (newIndex >= 0 && newIndex < photoStore.photos.length) {
+    const nextPhoto = photoStore.photos[newIndex]
+    router.push(`/photo/${nextPhoto.id}`)
+    // 更新当前照片
+    currentPhoto.value = nextPhoto
+  }
+}
 
 // 面包屑项
 const breadcrumbItems = computed((): BreadcrumbItem[] => {
@@ -268,7 +362,7 @@ const breadcrumbItems = computed((): BreadcrumbItem[] => {
   const personId = route.query.personId as string
 
   if (from === 'person' && personId) {
-    const personName = photoStore.photo?.persons?.find(p => String(p.id) === personId)?.name || '人物'
+    const personName = currentPhoto.value?.persons?.find(p => String(p.id) === personId)?.name || '人物'
     return [
       { label: '首页', path: '/', icon: Home24Regular },
       { label: '人物', path: '/people', icon: People24Regular },
@@ -284,13 +378,44 @@ const breadcrumbItems = computed((): BreadcrumbItem[] => {
   ]
 })
 
-// 加载照片
+// 加载照片 - 优先从 photoStore 缓存获取
 const loadPhoto = async () => {
   const id = route.params.id as string
-  await photoStore.loadPhoto(id)
+  loading.value = true
+  error.value = ''
 
-  if (!photoStore.photo) {
-    message.warning('照片不存在')
+  console.log('[PhotoDetailView] 加载照片, ID:', id)
+  console.log('[PhotoDetailView] photoStore.photos 数量:', photoStore.photos.length)
+
+  // 🎯 关键修复：优先从 photoStore 缓存获取（列表页已加载的照片）
+  const cachedPhoto = photoStore.photos.find(p =>
+    String(p.id) === String(id) ||
+    String(p.photo_id) === String(id)
+  )
+
+  if (cachedPhoto) {
+    console.log('[PhotoDetailView] ✅ 从 photoStore 缓存获取:', cachedPhoto.id || cachedPhoto.photo_id)
+    currentPhoto.value = cachedPhoto
+    loading.value = false
+    return
+  }
+
+  // 缓存未命中，尝试从 API 获取
+  console.log('[PhotoDetailView] 缓存未命中，尝试 API 获取...')
+  try {
+    const detail = await photoStore.fetchPhotoDetail(id)
+    if (detail) {
+      console.log('[PhotoDetailView] API 获取成功:', detail.id)
+      currentPhoto.value = detail
+    } else {
+      console.error('[PhotoDetailView] 照片不存在:', id)
+      error.value = '照片不存在'
+    }
+  } catch (err) {
+    console.error('[PhotoDetailView] 加载失败:', err)
+    error.value = '加载失败'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -323,12 +448,13 @@ const formatFileSize = (bytes?: number): string => {
 
 // 导出照片
 const handleExport = async () => {
-  if (!photoStore.photo) return
+  if (!currentPhoto.value) return
 
+  const photo = currentPhoto.value
   const result = await (window as any).photoAPI?.photos?.export({
-    photoId: photoStore.photo.id,
-    filePath: photoStore.photo.filePath,
-    exportPath: photoStore.photo.fileName
+    photoId: photo.id || photo.photo_id,
+    filePath: photo.filePath || photo.file_path,
+    exportPath: photo.fileName || photo.file_name
   })
 
   if (result?.success) {
@@ -340,24 +466,32 @@ const handleExport = async () => {
 
 // 删除照片
 const handleDelete = async () => {
-  if (!photoStore.photo) return
+  if (!currentPhoto.value) return
+
+  const photo = currentPhoto.value
+  const photoId = photo.id || photo.photo_id
+  const fileName = photo.fileName || photo.file_name
 
   dialog.warning({
     title: '确认删除',
-    content: `确定要删除「${photoStore.photo.fileName}」吗？此操作不可恢复。`,
+    content: `确定要删除「${fileName}」吗？此操作不可恢复。`,
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
-      const photoId = photoStore.photo?.id
       if (!photoId) return
 
-      const result = await photoStore.deletePhoto(photoId)
+      try {
+        const result = await (window as any).photoAPI?.photos?.delete(photoId)
 
-      if (result.success) {
-        message.success('照片已删除')
-        router.back()
-      } else {
-        message.error(result.error || '删除失败')
+        if (result?.success) {
+          message.success('照片已删除')
+          router.back()
+        } else {
+          message.error(result?.error || '删除失败')
+        }
+      } catch (err) {
+        console.error('删除失败:', err)
+        message.error('删除失败')
       }
     }
   })
@@ -386,32 +520,32 @@ const handleKeydown = (event: KeyboardEvent) => {
 
   switch (event.key) {
     case 'ArrowLeft':
-      if (!photoStore.isFirst) {
-        photoStore.navigateTo('prev')
+      if (hasPrev.value) {
+        navigateTo('prev')
       }
       break
     case 'ArrowRight':
-      if (!photoStore.isLast) {
-        photoStore.navigateTo('next')
+      if (hasNext.value) {
+        navigateTo('next')
       }
       break
     case 'Delete':
     case 'Backspace':
-      if (photoStore.photo) {
+      if (currentPhoto.value) {
         event.preventDefault()
         handleDelete()
       }
       break
     case 'e':
     case 'E':
-      if (photoStore.photo) {
+      if (currentPhoto.value) {
         event.preventDefault()
         handleExport()
       }
       break
     case 'f':
     case 'F':
-      if (photoStore.photo) {
+      if (currentPhoto.value) {
         event.preventDefault()
         toggleFullscreen()
       }
@@ -429,6 +563,14 @@ const handleKeydown = (event: KeyboardEvent) => {
 const handleFullscreenChange = () => {
   isFullscreen.value = !!document.fullscreenElement
 }
+
+// 监听路由参数变化（在同一组件内切换照片）
+watch(() => route.params.id, (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    console.log('[PhotoDetailView] 路由参数变化，重新加载:', newId)
+    loadPhoto()
+  }
+}, { immediate: false })
 
 // 初始化
 onMounted(() => {

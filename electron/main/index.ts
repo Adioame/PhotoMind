@@ -428,13 +428,53 @@ function setupIPCHandlers() {
 
   // 获取照片详情
   ipcMain.handle('photos:get-detail', async (event, photoId) => {
+    console.log('[IPC photos:get-detail] 收到请求, photoId:', photoId, '类型:', typeof photoId)
     try {
-      if (!iCloudService) {
-        return generateMockPhotos(1, parseInt(photoId) || 0)[0]
+      // 优先从本地数据库获取
+      if (localPhotoService && database) {
+        console.log('[IPC photos:get-detail] 使用本地数据库查询')
+        const numericId = parseInt(photoId)
+        console.log('[IPC photos:get-detail] 转换后的ID:', numericId)
+
+        const photo = database.getPhotoById(numericId)
+        console.log('[IPC photos:get-detail] 数据库查询结果:', photo ? '找到照片' : '未找到')
+
+        if (photo) {
+          console.log('[IPC photos:get-detail] 返回照片详情:', photo.id, photo.file_name)
+          // 统一字段映射：下划线转驼峰
+          return {
+            id: photo.id,
+            uuid: photo.uuid,
+            cloudId: photo.cloud_id,
+            filePath: photo.file_path,
+            fileName: photo.file_name,
+            fileSize: photo.file_size,
+            width: photo.width,
+            height: photo.height,
+            takenAt: photo.taken_at,
+            thumbnailPath: photo.thumbnail_path,
+            exif: photo.exif_data ? JSON.parse(photo.exif_data) : {},
+            location: photo.location_data ? JSON.parse(photo.location_data) : null,
+            status: photo.status || 'local'
+          }
+        }
+        console.log('[IPC photos:get-detail] 本地数据库未找到照片:', photoId)
+      } else {
+        console.log('[IPC photos:get-detail] localPhotoService 或 database 未初始化')
+        console.log('  localPhotoService:', !!localPhotoService)
+        console.log('  database:', !!database)
       }
-      return await iCloudService.getPhotoDetail(photoId)
+
+      // 后备到 iCloudService
+      if (iCloudService) {
+        console.log('[IPC photos:get-detail] 尝试从 iCloudService 获取')
+        return await iCloudService.getPhotoDetail(photoId)
+      }
+
+      console.log('[IPC photos:get-detail] 所有数据源都未找到照片:', photoId)
+      return null
     } catch (error) {
-      console.error('获取照片详情失败:', error)
+      console.error('[IPC photos:get-detail] 获取照片详情失败:', error)
       return null
     }
   })

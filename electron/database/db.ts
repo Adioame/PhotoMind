@@ -461,10 +461,17 @@ export class PhotoDatabase {
   }
 
   getPhotoById(id: number): any {
+    console.log('[DB getPhotoById] 查询照片, ID:', id, '类型:', typeof id)
     const rows = this.query('SELECT * FROM photos WHERE id = ?', [id])
-    if (rows.length === 0) return null
+    console.log('[DB getPhotoById] 查询结果行数:', rows.length)
+
+    if (rows.length === 0) {
+      console.log('[DB getPhotoById] 未找到照片:', id)
+      return null
+    }
 
     const row = rows[0]
+    console.log('[DB getPhotoById] 找到照片:', row.id, row.file_name)
     row.exif_data = row.exif_data ? JSON.parse(row.exif_data) : {}
     row.location_data = row.location_data ? JSON.parse(row.location_data) : {}
     return row

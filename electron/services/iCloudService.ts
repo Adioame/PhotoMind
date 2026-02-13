@@ -493,14 +493,16 @@ export class ICloudService {
 
   private normalizePhoto(photo: any): any {
     return {
+      id: photo.id,
       uuid: photo.uuid || photo.id || crypto.randomUUID(),
-      cloudId: photo.cloudId || photo.id,
-      filePath: photo.filePath || photo.originalPath,
-      fileName: photo.filename || photo.name,
-      fileSize: photo.fileSize || photo.size,
+      cloudId: photo.cloudId || photo.cloud_id || photo.id,
+      filePath: photo.filePath || photo.file_path || photo.originalPath,
+      fileName: photo.filename || photo.file_name || photo.name,
+      fileSize: photo.fileSize || photo.file_size || photo.size,
       width: photo.width,
       height: photo.height,
-      takenAt: photo.takenAt || photo.creationDate || new Date().toISOString(),
+      takenAt: photo.takenAt || photo.taken_at || photo.creationDate || new Date().toISOString(),
+      thumbnailPath: photo.thumbnailPath || photo.thumbnail_path || photo.thumbnail,
       exif: {
         camera: photo.cameraModel,
         lens: photo.lensModel,
@@ -512,7 +514,7 @@ export class ICloudService {
         latitude: photo.location.latitude,
         longitude: photo.location.longitude
       } : null,
-      status: 'icloud'
+      status: photo.status || 'icloud'
     }
   }
 
