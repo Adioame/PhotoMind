@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('photoAPI', {
     detectBatch: (imagePaths: string[]) => ipcRenderer.invoke('face:detect-batch', imagePaths),
     cancel: () => ipcRenderer.invoke('face:cancel'),
     scanAll: () => ipcRenderer.invoke('face:scan-all'),
+    // 🆕 重置人脸扫描状态（删除 detected_faces 记录，允许重新扫描）
+    resetScanStatus: () => ipcRenderer.invoke('face:reset-scan-status'),
     // 🚨 队列状态诊断
     getQueueStatus: () => ipcRenderer.invoke('face:get-queue-status'),
     resetQueue: () => ipcRenderer.invoke('face:reset-queue'),
@@ -146,10 +148,18 @@ contextBridge.exposeInMainWorld('photoAPI', {
       ipcRenderer.on('face:scan-complete', listener)
       return () => ipcRenderer.off('face:scan-complete', listener)
     },
+    // 🆕 人物列表更新事件（聚类完成后触发）
+    onPeopleUpdated: (callback: () => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('people:updated', listener)
+      return () => ipcRenderer.off('people:updated', listener)
+    },
   },
 
   // 🚨 诊断工具（开发调试使用）
   diagnostic: {
+    // 获取数据库完整状态（CTO诊断）
+    getDbStats: () => ipcRenderer.invoke('diagnostic:get-db-stats'),
     // 获取人脸检测统计
     getFaceStats: () => ipcRenderer.invoke('diagnostic:face-stats'),
     // 清理所有人脸数据（用于重置）

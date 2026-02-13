@@ -1,12 +1,14 @@
+import { thumbnailService } from './thumbnailService.js';
 import { readdirSync, statSync, existsSync, promises as fs } from 'fs';
 import { extname, join, basename } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 const PHOTO_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.heic', '.webp', '.gif', '.tiff', '.tif', '.JPG', '.JPEG', '.PNG', '.HEIC', '.WEBP', '.GIF', '.TIFF', '.TIF'];
 const RAW_EXTENSIONS = ['.raw', '.cr2', '.nef', '.arw', '.dng'];
 export class LocalPhotoService {
-    constructor(database) {
+    constructor(database, thumbnailSvc) {
         this.importCallback = null;
         this.database = database;
+        this.thumbnailService = thumbnailSvc || thumbnailService;
     }
     onProgress(callback) {
         this.importCallback = callback;
@@ -20,6 +22,7 @@ export class LocalPhotoService {
                 status: 'scanning',
                 importedCount: 0,
                 errorCount: 0,
+                skippedCount: 0,
                 ...progress
             });
         }
@@ -28,6 +31,12 @@ export class LocalPhotoService {
         const photos = [];
         if (!existsSync(folderPath)) {
             throw new Error(`文件夹不存在: ${folderPath}`);
+        }
+        const appDir = process.cwd();
+        const userHome = process.env.HOME || process.env.USERPROFILE || '';
+        if (folderPath === appDir || folderPath.startsWith(appDir + '/')) {
+            console.warn(`[LocalPhotoService] 跳过应用程序目录: ${folderPath}`);
+            return [];
         }
         const scanDirectory = (dir) => {
             try {
@@ -41,7 +50,7 @@ export class LocalPhotoService {
                     }
                     else if (entry.isFile()) {
                         const ext = extname(entry.name).toLowerCase();
-                        if (PHOTO_EXTENSIONS.includes(ext)) {
+                        if (PHOTO_EXTENSIONS.includes(ext) && entry.name.split('.').length > 1) {
                             photos.push(fullPath);
                         }
                     }
@@ -335,6 +344,7 @@ export class LocalPhotoService {
     }
     async importFolder(folderPath) {
         let importedCount = 0;
+        let skippedCount = 0;
         let errorCount = 0;
         const importedPhotos = [];
         this.updateProgress({
@@ -348,7 +358,8 @@ export class LocalPhotoService {
                 total: photos.length,
                 current: 0,
                 importedCount: 0,
-                errorCount: 0
+                errorCount: 0,
+                skippedCount: 0
             });
             console.log(`找到 ${photos.length} 张照片`);
             for (let i = 0; i < photos.length; i++) {
@@ -358,15 +369,45 @@ export class LocalPhotoService {
                     total: photos.length,
                     currentFile: basename(filePath),
                     importedCount,
-                    errorCount
+                    errorCount,
+                    skippedCount
                 });
                 try {
                     const metadata = await this.extractMetadata(filePath);
-                    const photoId = this.database.addPhoto(metadata);
+                    const existingPhoto = this.database.getPhotoByFilePath(filePath);
+                    if (existingPhoto) {
+                        console.log(`[LocalPhotoService] 文件已存在，跳过: ${basename(filePath)}`);
+                        skippedCount++;
+                        this.updateProgress({
+                            current: i + 1,
+                            total: photos.length,
+                            currentFile: basename(filePath),
+                            importedCount,
+                            errorCount,
+                            skippedCount
+                        });
+                        continue;
+                    }
+                    let thumbnailPath = null;
+                    try {
+                        const thumbnailResult = await this.thumbnailService.generate(filePath);
+                        if (thumbnailResult) {
+                            thumbnailPath = thumbnailResult.path;
+                            console.log(`[LocalPhotoService] 缩略图生成成功: ${basename(filePath)}`);
+                        }
+                    }
+                    catch (thumbError) {
+                        console.warn(`[LocalPhotoService] 缩略图生成失败: ${filePath}`, thumbError);
+                    }
+                    const photoData = {
+                        ...metadata,
+                        thumbnailPath
+                    };
+                    const photoId = this.database.addPhoto(photoData);
                     if (photoId > 0) {
                         importedCount++;
                         importedPhotos.push({
-                            ...metadata,
+                            ...photoData,
                             id: photoId
                         });
                     }
@@ -384,7 +425,8 @@ export class LocalPhotoService {
                 current: photos.length,
                 total: photos.length,
                 importedCount,
-                errorCount
+                errorCount,
+                skippedCount
             });
         }
         catch (error) {
@@ -397,6 +439,7 @@ export class LocalPhotoService {
         }
         return {
             imported: importedCount,
+            skipped: skippedCount,
             errors: errorCount,
             photos: importedPhotos
         };
@@ -427,10 +470,30 @@ export class LocalPhotoService {
             return 0;
         }
     }
+    getPhotosWithoutEmbeddings(limit = 100) {
+        try {
+            const photos = this.database.getPhotosWithoutEmbeddings(limit);
+            return photos.map(p => ({
+                id: p.id,
+                uuid: p.uuid,
+                filePath: p.file_path,
+                fileName: p.file_name,
+                thumbnailPath: p.thumbnail_path,
+                takenAt: p.taken_at
+            }));
+        }
+        catch (error) {
+            console.error('获取无向量照片失败:', error);
+            return [];
+        }
+    }
     getLocalPhotos(limit = 100, offset = 0) {
         try {
+            console.log(`[LocalPhotoService] getLocalPhotos - limit: ${limit}, offset: ${offset}`);
+            console.log(`[LocalPhotoService] database 可用: ${!!this.database}`);
             const photos = this.database.getAllPhotos(limit, offset);
-            return photos.map(p => ({
+            console.log(`[LocalPhotoService] getAllPhotos 返回 ${photos.length} 条记录`);
+            const result = photos.map(p => ({
                 id: p.id,
                 uuid: p.uuid,
                 cloudId: p.cloud_id,
@@ -445,9 +508,11 @@ export class LocalPhotoService {
                 thumbnailPath: p.thumbnail_path,
                 status: p.status || 'local'
             }));
+            console.log(`[LocalPhotoService] 映射后返回 ${result.length} 张照片`);
+            return result;
         }
         catch (error) {
-            console.error('获取本地照片失败:', error);
+            console.error('[LocalPhotoService] 获取本地照片失败:', error);
             return [];
         }
     }
@@ -465,6 +530,25 @@ export class LocalPhotoService {
             }
         }
         return {};
+    }
+    deletePhoto(photoId) {
+        try {
+            console.log(`[LocalPhotoService] 删除照片: ${photoId}`);
+            const photo = this.database.getPhotoById(photoId);
+            if (!photo) {
+                console.warn(`[LocalPhotoService] 照片 ${photoId} 不存在于数据库`);
+                return false;
+            }
+            const success = this.database.deletePhoto(photo.uuid);
+            if (success) {
+                console.log(`[LocalPhotoService] 照片 ${photoId} (uuid: ${photo.uuid}) 已从数据库删除`);
+            }
+            return success;
+        }
+        catch (error) {
+            console.error(`[LocalPhotoService] 删除照片失败: ${photoId}`, error);
+            return false;
+        }
     }
 }
 //# sourceMappingURL=localPhotoService.js.map

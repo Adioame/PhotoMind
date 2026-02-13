@@ -10,6 +10,11 @@ export class FolderScanner {
     }
     async scanFolder(folderPath, options = {}) {
         const { extensions = this.supportedExtensions, recursive = true, skipHidden = true } = options;
+        const appDir = process.cwd();
+        if (folderPath === appDir || folderPath.startsWith(appDir + '/')) {
+            console.warn(`[FolderScanner] 跳过应用程序目录: ${folderPath}`);
+            return [];
+        }
         const files = [];
         await this.scanDirectory(folderPath, '', files, {
             extensions,
@@ -51,6 +56,9 @@ export class FolderScanner {
     }
     shouldIncludeFile(filename, options) {
         const ext = extname(filename).toLowerCase();
+        if (!ext || ext === filename) {
+            return false;
+        }
         if (options.skipHidden && filename.startsWith('.')) {
             return false;
         }

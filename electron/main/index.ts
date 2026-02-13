@@ -1,7 +1,7 @@
 /**
  * PhotoMind - Electron 主进程入口
  */
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
 import { resolve, dirname, basename } from 'path'
 import { fileURLToPath } from 'url'
 import { ICloudService } from '../services/iCloudService.js'
@@ -72,7 +72,8 @@ const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV ===
  * 这样可以绕过浏览器的 file:// 协议安全限制
  */
 function registerLocalResourceProtocol() {
-  protocol.registerFileProtocol('local-resource', (request, callback) => {
+  // 🆕 使用 handle API 替代 registerFileProtocol（Electron 25+ 推荐）
+  protocol.handle('local-resource', async (request) => {
     try {
       // 移除协议前缀
       const url = request.url.replace(/^local-resource:\/\//, '')
@@ -80,16 +81,26 @@ function registerLocalResourceProtocol() {
       // 解码 URL 编码的路径（处理中文等特殊字符）
       const decodedUrl = decodeURIComponent(url)
 
-      // 返回本地文件路径
-      callback(decodedUrl)
+      console.log(`[local-resource] 请求: ${decodedUrl}`)
+
+      // 🆕 检查文件是否存在
+      const fs = await import('fs')
+      if (!fs.existsSync(decodedUrl)) {
+        console.error(`[local-resource] 文件不存在: ${decodedUrl}`)
+        return new Response('File not found', { status: 404 })
+      }
+
+      console.log(`[local-resource] 文件存在，返回: ${decodedUrl.substring(0, 60)}...`)
+
+      // 使用 net.fetch 返回文件内容
+      return await net.fetch('file://' + decodedUrl)
     } catch (error) {
-      console.error('Failed to handle local-resource protocol request:', error)
-      // 返回错误时的安全路径
-      callback('')
+      console.error('[local-resource] 处理失败:', error)
+      return new Response('Not found', { status: 404 })
     }
   })
 
-  console.log('✓ 自定义协议 local-resource:// 已注册')
+  console.log('✓ 自定义协议 local-resource:// 已注册 (handle API)')
 }
 
 // 路径辅助函数 - 适配 Electron-Forge
@@ -227,7 +238,8 @@ async function initServices() {
     configService = new ConfigService()
     console.log('✓ 配置服务初始化完成')
 
-    // 初始化数据库
+    // 初始化数据库 - 使用默认路径（项目目录下的 data/photo-mind.db）
+    // 注意：不要修改数据库路径，否则已导入的照片数据会丢失
     database = new PhotoDatabase()
     await database.init()
     console.log('✓ 数据库初始化完成')
@@ -722,12 +734,16 @@ function setupIPCHandlers() {
 
   // ==================== 本地照片导入相关 ====================
 
-  // 选择导入文件夹
+  // 选择导入文件夹或文件
   ipcMain.handle('local:select-folder', async () => {
     const result = await dialog.showOpenDialog({
-      properties: ['openDirectory', 'multiSelections'],
-      title: '选择要导入的照片文件夹',
-      buttonLabel: '选择文件夹'
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      title: '选择要导入的照片或文件夹',
+      buttonLabel: '选择',
+      filters: [
+        { name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'tiff'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
     })
 
     if (!result.canceled && result.filePaths.length > 0) {
@@ -736,19 +752,37 @@ function setupIPCHandlers() {
     return []
   })
 
-  // 开始导入照片
+  // 开始导入照片（支持文件夹或单个文件）
   ipcMain.handle('local:import-folder', async (event, folderPath: string) => {
     try {
       if (!localPhotoService) {
         throw new Error('本地照片服务未初始化')
       }
 
+      const fs = await import('fs')
+      const stat = fs.statSync(folderPath)
+
       // 设置进度回调
       localPhotoService.onProgress((progress) => {
         event.sender.send('local:import-progress', progress)
       })
 
-      const result = await localPhotoService.importFolder(folderPath)
+      let result
+      if (stat.isFile()) {
+        // 导入单个文件
+        console.log(`[IPC] 导入单张照片: ${folderPath}`)
+        const photo = await localPhotoService.importPhoto(folderPath)
+        result = {
+          imported: photo ? 1 : 0,
+          skipped: 0,
+          errors: photo ? 0 : 1,
+          photos: photo ? [photo] : []
+        }
+      } else {
+        // 导入文件夹
+        result = await localPhotoService.importFolder(folderPath)
+      }
+
       return {
         success: true,
         imported: result.imported,
@@ -1422,6 +1456,87 @@ function setupIPCHandlers() {
     }
   })
 
+  // 🆕 重置人脸扫描状态（删除 detected_faces 记录，允许重新扫描）
+  ipcMain.handle('face:reset-scan-status', async () => {
+    try {
+      if (!database) {
+        return { success: false, error: '数据库未初始化' }
+      }
+
+      console.log('[IPC] 深度重置人脸扫描状态...')
+
+      // 1. 获取当前统计
+      const beforeFaces = database.query(`SELECT COUNT(*) as count FROM detected_faces`)[0]
+      const beforePersons = database.query(`SELECT COUNT(*) as count FROM persons`)[0]
+      const beforePhotos = database.query(`SELECT COUNT(*) as count FROM photos WHERE file_path IS NOT NULL`)[0]
+      console.log(`[IPC] 重置前统计: ${beforeFaces?.count || 0} 人脸, ${beforePersons?.count || 0} 人物, ${beforePhotos?.count || 0} 照片`)
+
+      // 2. 删除所有人脸数据
+      database.run('DELETE FROM detected_faces')
+      database.run('DELETE FROM persons')  // 也删除人物，因为人脸没了人物也没意义
+
+      // 3. 【关键】重置所有照片的扫描状态（让getUnprocessedPhotos能重新获取）
+      // detected_faces表为空时，LEFT JOIN会返回NULL，照片自然被视为"未处理"
+      // 但为了彻底重置，我们确保photos表没有被意外标记
+
+      // 4. 验证删除结果
+      const afterFaces = database.query(`SELECT COUNT(*) as count FROM detected_faces`)[0]
+      const afterPersons = database.query(`SELECT COUNT(*) as count FROM persons`)[0]
+
+      // 5. 检查getUnprocessedPhotos会返回多少张
+      const unprocessedPhotos = database.getUnprocessedPhotos(1000)
+
+      console.log(`[IPC] 深度重置完成:`)
+      console.log(`  - 删除人脸: ${beforeFaces?.count || 0} → ${afterFaces?.count || 0}`)
+      console.log(`  - 删除人物: ${beforePersons?.count || 0} → ${afterPersons?.count || 0}`)
+      console.log(`  - 可重新扫描照片: ${unprocessedPhotos.length}`)
+
+      return {
+        success: true,
+        deletedCount: beforeFaces?.count || 0,
+        resetPhotos: unprocessedPhotos.length,
+        message: `已清理 ${beforeFaces?.count || 0} 人脸、${beforePersons?.count || 0} 人物，${unprocessedPhotos.length} 张照片可重新扫描`
+      }
+    } catch (error) {
+      console.error('[IPC] 重置扫描状态失败:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '重置失败'
+      }
+    }
+  })
+
+  // 🆕 诊断API：获取数据库状态（CTO要求的验证）
+  ipcMain.handle('diagnostic:get-db-stats', async () => {
+    try {
+      if (!database) {
+        return { success: false, error: '数据库未初始化' }
+      }
+
+      const stats = {
+        photos: {
+          total: database.query('SELECT COUNT(*) as count FROM photos')[0]?.count || 0,
+          withFilePath: database.query('SELECT COUNT(*) as count FROM photos WHERE file_path IS NOT NULL')[0]?.count || 0,
+          unprocessed: database.getUnprocessedPhotos(1000).length
+        },
+        detected_faces: {
+          total: database.query('SELECT COUNT(*) as count FROM detected_faces')[0]?.count || 0,
+          unassigned: database.query('SELECT COUNT(*) as count FROM detected_faces WHERE person_id IS NULL')[0]?.count || 0,
+          assigned: database.query('SELECT COUNT(*) as count FROM detected_faces WHERE person_id IS NOT NULL')[0]?.count || 0
+        },
+        persons: {
+          total: database.query('SELECT COUNT(*) as count FROM persons')[0]?.count || 0
+        }
+      }
+
+      console.log('[Diagnostic] 数据库状态:', stats)
+      return { success: true, stats }
+    } catch (error) {
+      console.error('[Diagnostic] 获取统计失败:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
   // 扫描所有未处理的照片（人脸检测）- 全链路透明化版本
   ipcMain.handle('face:scan-all', async (event) => {
     try {
@@ -1506,6 +1621,47 @@ function setupIPCHandlers() {
       }
 
       if (photos.length === 0) {
+        // 🆕 检查是否已有检测数据但未聚类
+        const unclusteredCount = queue.getUnclusteredFaceCount()
+        console.log(`[IPC] 没有新照片需要扫描，但未聚类人脸数: ${unclusteredCount}`)
+
+        if (unclusteredCount > 0) {
+          console.log(`[IPC] 发现 ${unclusteredCount} 个未聚类人脸，直接触发聚类...`)
+
+          if (mainWindow) {
+            mainWindow.webContents.send('face:status', {
+              stage: 'processing',
+              message: `发现 ${unclusteredCount} 个未识别人脸，正在聚类...`
+            })
+          }
+
+          // 直接执行聚类
+          const clusterResult = await queue.clusterExistingFaces()
+
+          if (mainWindow) {
+            mainWindow.webContents.send('face:status', {
+              stage: 'completed',
+              message: `聚类完成！识别了 ${clusterResult.matched} 张人脸，创建了 ${clusterResult.personsCreated} 位人物`
+            })
+            mainWindow.webContents.send('face:scan-complete', {
+              total: unclusteredCount,
+              completed: unclusteredCount,
+              failed: 0,
+              detectedFaces: clusterResult.matched
+            })
+            // 🆕 通知前端刷新人物列表
+            mainWindow.webContents.send('people:updated')
+          }
+
+          return {
+            success: true,
+            count: 0,
+            detectedFaces: clusterResult.matched,
+            personsCreated: clusterResult.personsCreated,
+            message: `聚类完成！创建了 ${clusterResult.personsCreated} 位人物`
+          }
+        }
+
         if (mainWindow) {
           mainWindow.webContents.send('face:status', { stage: 'completed', message: '没有需要处理的照片' })
         }

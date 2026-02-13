@@ -198,10 +198,8 @@ export class QueryParserService {
     // 时间模式检测
     const yearPattern = /(?:在|于|年份)?(\d{4})年?/
     const monthPattern = /(\d{1,2})月/
-    const relativeTimePattern = /(去年|今年|前年|最近|近期|上个月|这个月|本周|上周)/
     const yearMatch = query.match(yearPattern)
     const monthMatch = query.match(monthPattern)
-    const relativeTimeMatch = query.match(relativeTimePattern)
 
     if (yearMatch) {
       entities.push({
@@ -219,15 +217,6 @@ export class QueryParserService {
         confidence: 0.8
       })
       searchHints.push({ type: 'month', value: monthMatch[1] })
-    }
-
-    if (relativeTimeMatch) {
-      entities.push({
-        type: 'time',
-        value: relativeTimeMatch[1],
-        confidence: 0.85
-      })
-      searchHints.push({ type: 'keyword', value: relativeTimeMatch[1] })
     }
 
     // 人物模式检测
@@ -254,33 +243,15 @@ export class QueryParserService {
     }
 
     // 地点模式检测
-    const locations = ['日本', '美国', '欧洲', '国内', '北京', '上海', '广州', '深圳', '东京', '纽约', '巴黎', '伦敦', '悉尼']
-    const sceneWords = ['海边', '海滩', '沙滩', '山', '山景', '城市', '乡村', '森林', '公园', '湖边', '湖畔', '江边', '河边']
-
+    const locations = ['日本', '美国', '欧洲', '国内', '北京', '上海', '东京', '纽约', '巴黎', '海边', '山', '城市', '乡村']
     for (const location of locations) {
       if (lowerQuery.includes(location)) {
         entities.push({
           type: 'location',
           value: location,
-          confidence: 0.8
+          confidence: 0.7
         })
         searchHints.push({ type: 'place', value: location })
-        break
-      }
-    }
-
-    // 场景词检测（用于语义搜索）
-    for (const scene of sceneWords) {
-      if (lowerQuery.includes(scene)) {
-        // 检查是否已作为地点添加
-        const alreadyAdded = entities.some(e => e.type === 'location' && e.value === scene)
-        if (!alreadyAdded) {
-          entities.push({
-            type: 'object',
-            value: scene,
-            confidence: 0.75
-          })
-        }
         break
       }
     }
@@ -291,25 +262,10 @@ export class QueryParserService {
 
     // 确定查询类型
     let type: QueryType = 'keyword'
-
-    // 检查实体类型分布
-    const hasTime = entities.some(e => e.type === 'time')
-    const hasLocation = entities.some(e => e.type === 'location')
-    const hasPerson = entities.some(e => e.type === 'person')
-    const hasObject = entities.some(e => e.type === 'object')
-
-    if (hasPerson) {
-      type = 'people'
-    } else if (hasTime && (hasLocation || hasObject)) {
+    if (entities.length > 0) {
       type = 'mixed'
-    } else if (hasTime) {
-      type = 'time'
-    } else if (hasLocation) {
-      type = 'location'
-    } else if (hasObject || hasEmotion) {
+    } else if (hasEmotion) {
       type = 'semantic'
-    } else if (entities.length > 0) {
-      type = 'mixed'
     }
 
     // 关键词提取

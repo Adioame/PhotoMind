@@ -454,6 +454,19 @@ onMounted(() => {
   loadUnnamedFaces()
   // 确保扫描状态可见性正确
   scanStore.showProgressIfActive()
+
+  // 🆕 监听人物更新事件（聚类完成后自动刷新）
+  const unsubscribePeopleUpdated = (window as any).photoAPI?.face?.onPeopleUpdated?.(() => {
+    console.log('[PeopleView] 收到 people:updated 事件，刷新人物列表')
+    peopleStore.fetchPeople()
+    loadUnnamedFaces()
+    message.success('人物识别完成！')
+  })
+
+  // 组件卸载时取消监听
+  return () => {
+    unsubscribePeopleUpdated?.()
+  }
 })
 </script>
 

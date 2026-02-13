@@ -1,6 +1,7 @@
 import { folderScanner } from './folderScanner.js';
-import { PhotoDatabase } from '../database/db.js';
 import { importProgressService } from './importProgressService.js';
+import { backgroundVectorService } from './backgroundVectorService.js';
+import { faceDetectionQueue } from './faceDetectionQueue.js';
 import crypto from 'crypto';
 import { promises as fs } from 'fs';
 export class ImportService {
@@ -145,6 +146,108 @@ export class ImportService {
     getIsImporting() {
         return this.isImporting;
     }
+    async importPhotoWithVector(filePath, options = {}) {
+        try {
+            try {
+                await fs.access(filePath);
+            }
+            catch {
+                return { success: false };
+            }
+            const fileHash = await this.calculateFileHash(filePath);
+            const existingPhoto = this.findExistingPhoto(filePath, fileHash);
+            if (existingPhoto) {
+                console.log(`[Import] 照片已存在: ${filePath}`);
+                return { success: true, photoUuid: existingPhoto.uuid, vectorQueued: false };
+            }
+            const filename = filePath.split('/').pop() || 'unknown';
+            const stats = await fs.stat(filePath);
+            const photoData = {
+                uuid: this.generateUUID(),
+                fileName: filename,
+                filePath: filePath,
+                fileSize: stats.size,
+                width: null,
+                height: null,
+                takenAt: stats.mtime.toISOString(),
+                exif: {},
+                location: {},
+                status: 'local'
+            };
+            const photoId = this.database.addPhoto(photoData);
+            if (photoId > 0) {
+                console.log(`[Import] 照片导入成功: ${photoData.uuid}`);
+                backgroundVectorService.addPhoto(photoData.uuid);
+                this.triggerFaceDetection(photoId, photoData.uuid, filePath);
+                return {
+                    success: true,
+                    photoUuid: photoData.uuid,
+                    vectorQueued: true
+                };
+            }
+            return { success: false };
+        }
+        catch (error) {
+            console.error(`[Import] 导入照片失败: ${filePath}`, error);
+            return { success: false };
+        }
+    }
+    async importFolderWithVectors(folderPath, options = {}) {
+        const importResult = await this.importFromFolder(folderPath, options);
+        if (importResult.imported > 0) {
+            const recentPhotos = this.database.query(`SELECT uuid FROM photos WHERE status = 'local' ORDER BY id DESC LIMIT ?`, [importResult.imported]);
+            if (recentPhotos.length > 0) {
+                const photoUuids = recentPhotos.map((p) => p.uuid);
+                const taskId = backgroundVectorService.addGenerateTask(photoUuids);
+                console.log(`[Import] 已添加 ${photoUuids.length} 张照片到向量生成队列，任务ID: ${taskId}`);
+                await this.triggerFaceDetectionBatch(photoUuids);
+                return {
+                    importResult,
+                    vectorTaskId: taskId
+                };
+            }
+        }
+        return { importResult };
+    }
+    getVectorGenerationStatus() {
+        const currentTask = backgroundVectorService.getCurrentTask();
+        return {
+            hasActiveTask: currentTask !== null,
+            currentTask,
+            stats: backgroundVectorService.getStats()
+        };
+    }
+    getPendingVectorCount() {
+        const stats = backgroundVectorService.getStats();
+        return stats.pending;
+    }
+    async triggerFaceDetection(photoId, photoUuid, filePath) {
+        try {
+            await faceDetectionQueue.addTask(photoId.toString(), photoUuid, filePath);
+            console.log(`[Import] 已添加到人脸检测队列: ${photoUuid}`);
+        }
+        catch (error) {
+            console.error(`[Import] 人脸检测触发失败: ${photoUuid}`, error);
+        }
+    }
+    async triggerFaceDetectionBatch(photoUuids) {
+        if (photoUuids.length === 0)
+            return;
+        try {
+            const photos = this.database.query(`SELECT id, uuid, file_path FROM photos WHERE uuid IN (${photoUuids.map(() => '?').join(',')})`, photoUuids);
+            for (const photo of photos) {
+                await this.triggerFaceDetection(photo.id, photo.uuid, photo.file_path);
+            }
+            console.log(`[Import] 已批量添加 ${photos.length} 张照片到人脸检测队列`);
+        }
+        catch (error) {
+            console.error('[Import] 批量人脸检测触发失败:', error);
+        }
+    }
 }
-export const importService = new ImportService(new PhotoDatabase());
+export let importService = null;
+export function initializeImportService(database) {
+    importService = new ImportService(database);
+    return importService;
+}
 //# sourceMappingURL=importService.js.map

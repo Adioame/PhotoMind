@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from 'fs'
 import crypto from 'crypto'
 import sharp from 'sharp'
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
+// 🆕 使用 process.cwd() 确保缩略图保存在项目根目录，而不是构建输出目录
+const PROJECT_ROOT = process.cwd()
 
 export interface ThumbnailOptions {
   width?: number
@@ -33,7 +34,7 @@ export class ThumbnailService {
   private defaultOptions: ThumbnailOptions
 
   constructor() {
-    this.cacheDir = resolve(__dirname, '../../data/cache')
+    this.cacheDir = resolve(PROJECT_ROOT, 'data/cache')
     this.thumbnailDir = join(this.cacheDir, 'thumbnails')
     this.defaultOptions = {
       width: 300,

@@ -46,17 +46,11 @@ export interface MergedSearchResponse {
   total: number
   query: string
   intent?: QueryIntent
-  matchType?: string
   processingTimeMs: number
   stats: {
     keywordCount: number
     semanticCount: number
     mergedCount: number
-  }
-  emptyState?: {
-    type: string
-    message: string
-    action?: { text: string; link: string }
   }
 }
 
@@ -149,7 +143,6 @@ export class ResultMergeService {
     // 2. 根据意图调整权重
     let keywordWeight = 0.3
     let vectorWeight = 0.7
-    let matchType = intent.type
 
     switch (intent.type) {
       case 'keyword':
@@ -161,27 +154,15 @@ export class ResultMergeService {
         vectorWeight = 0.8
         break
       case 'people':
-        keywordWeight = 0.5
-        vectorWeight = 0.5
-        // 处理人物搜索
-        return this.handlePeopleSearch(query, intent)
       case 'location':
-        keywordWeight = 0.6
-        vectorWeight = 0.4
-        break
       case 'time':
-        keywordWeight = 0.8
-        vectorWeight = 0.2
-        break
-      case 'mixed':
         keywordWeight = 0.5
         vectorWeight = 0.5
-        matchType = 'combined'
         break
     }
 
     // 3. 执行混合搜索
-    const result = await this.search({
+    return this.search({
       query,
       queryIntent: intent,
       keywordWeight,
@@ -189,84 +170,6 @@ export class ResultMergeService {
       limit: 50,
       enableDeduplication: true
     })
-
-    // 4. 添加匹配类型
-    return {
-      ...result,
-      matchType
-    }
-  }
-
-  /**
-   * 处理人物搜索
-   */
-  private async handlePeopleSearch(query: string, intent: QueryIntent): Promise<MergedSearchResponse> {
-    const startTime = Date.now()
-
-    // 提取人物名称
-    const personEntity = intent.entities.find(e => e.type === 'person')
-    const personName = personEntity?.value
-
-    if (personName) {
-      // 查找人物
-      const person = this.database.findPersonByName(personName)
-
-      if (!person) {
-        // 人物未找到
-        return {
-          results: [],
-          total: 0,
-          query,
-          intent,
-          matchType: 'person',
-          processingTimeMs: Date.now() - startTime,
-          stats: { keywordCount: 0, semanticCount: 0, mergedCount: 0 },
-          emptyState: {
-            type: 'person_not_found',
-            message: `未找到名为'${personName}'的人物`,
-            action: { text: '去人物页面命名', link: '/people' }
-          }
-        }
-      }
-
-      // 获取该人物的照片
-      const photos = this.database.getPhotosByPerson(person.id, 50)
-      const results: MergedSearchResult[] = photos.map((p, index) => ({
-        photoUuid: p.uuid,
-        fileName: p.file_name,
-        filePath: p.file_path,
-        score: 1.0 - (index * 0.01),
-        rank: index + 1,
-        sources: [{ type: 'keyword' as const, score: 1.0, weight: 1.0, weightedScore: 1.0 }],
-        highlights: [personName],
-        thumbnailPath: p.thumbnail_path,
-        takenAt: p.taken_at
-      }))
-
-      return {
-        results,
-        total: results.length,
-        query,
-        intent,
-        matchType: 'person',
-        processingTimeMs: Date.now() - startTime,
-        stats: { keywordCount: results.length, semanticCount: 0, mergedCount: results.length }
-      }
-    }
-
-    // 没有具体人物名称，执行普通搜索
-    const result = await this.search({
-      query,
-      queryIntent: intent,
-      keywordWeight: 0.5,
-      vectorWeight: 0.5,
-      limit: 50
-    })
-
-    return {
-      ...result,
-      matchType: 'person'
-    }
   }
 
   /**

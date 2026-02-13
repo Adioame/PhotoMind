@@ -43,13 +43,11 @@
           class="photo-item"
           @click="$emit('photo-click', photo)"
         >
-          <n-image
+          <img
             :src="getPhotoUrl(photo)"
-            :alt="photo.fileName"
-            object-fit="cover"
-            :img-props="{ loading: 'eager' }"
+            :alt="photo.fileName || ''"
+            loading="lazy"
             class="photo-image"
-            preview-disabled
             @error="(e) => handleImageError(e, photo)"
           />
           <div class="photo-overlay">
@@ -71,7 +69,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NImage, NSpin, NIcon } from 'naive-ui'
+import { NSpin, NIcon } from 'naive-ui'
 import { Folder24Regular, Location16Regular } from '@vicons/fluent'
 import EmptyState from './EmptyState.vue'
 import { toLocalResourceProtocol } from '@/utils/localResource'
@@ -109,9 +107,16 @@ const getPhotoUrl = (photo: Photo) => {
 }
 
 // 处理图片加载错误
+const failedImages = new Set<string>()
+
 const handleImageError = (e: Event, photo: Photo) => {
-  console.warn('图片加载失败:', photo.filePath || photo.thumbnailPath)
-  // 可以在这里添加错误处理逻辑，比如显示占位图或标记为损坏
+  const path = photo.filePath || photo.thumbnailPath
+  if (path && !failedImages.has(path)) {
+    failedImages.add(path)
+    console.warn('[PhotoGrid] 图片加载失败:', path)
+    console.warn('[PhotoGrid] 转换后的URL:', getPhotoUrl(photo))
+  }
+  // 可以在这里添加错误处理逻辑，比如显示占位图
 }
 
 // Props 定义
@@ -212,6 +217,8 @@ const openSync = () => {
   width: 100%;
   height: 100%;
   display: block;
+  object-fit: contain;
+  background-color: var(--bg-tertiary);
 }
 
 /* ================================

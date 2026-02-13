@@ -549,6 +549,14 @@ export class FaceMatchingService {
       }
 
       console.log(`[FaceMatching] 创建人物 "${personName}"，关联 ${assignedCount}/${cluster.faces.length} 张人脸`)
+
+      // 🆕 事务完整性检查：如果没有成功分配任何人脸，删除空人物
+      if (assignedCount === 0) {
+        console.warn(`[FaceMatching] 人物 "${personName}" 未关联任何人脸，删除空人物`)
+        this.database.run('DELETE FROM persons WHERE id = ?', [personId])
+        return { success: false, error: '未成功分配任何人脸' }
+      }
+
       return { success: true, personId }
     } catch (error) {
       console.error('[FaceMatching] 创建人物失败:', error)

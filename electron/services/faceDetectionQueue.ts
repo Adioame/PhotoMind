@@ -11,6 +11,7 @@
 import { FaceDetectionService, FaceDetectionResult, BatchDetectionProgress } from './faceDetectionService.js'
 import { PhotoDatabase } from '../database/db.js'
 import { ScanJobService, scanJobService } from './scanJobService.js'
+import { faceMatchingService } from './faceMatchingService.js'
 
 export interface DetectionTask {
   photoId: string
@@ -147,6 +148,69 @@ export class FaceDetectionQueue {
   }
 
   /**
+   * 🆕 检查是否有未聚类的人脸（已有检测数据但 person_id 为 NULL）
+   */
+  hasUnclusteredFaces(): boolean {
+    const result = this.database.query(`
+      SELECT COUNT(*) as count FROM detected_faces WHERE person_id IS NULL
+    `)
+    return (result[0]?.count || 0) > 0
+  }
+
+  /**
+   * 🆕 获取未聚类的人脸数量
+   */
+  getUnclusteredFaceCount(): number {
+    const result = this.database.query(`
+      SELECT COUNT(*) as count FROM detected_faces WHERE person_id IS NULL
+    `)
+    return result[0]?.count || 0
+  }
+
+  /**
+   * 🆕 仅执行聚类（不重新扫描）
+   */
+  async clusterExistingFaces(): Promise<{
+    success: boolean
+    matched: number
+    personsCreated: number
+    message?: string
+  }> {
+    const unclusteredCount = this.getUnclusteredFaceCount()
+    console.log(`[FaceDetectionQueue] 发现 ${unclusteredCount} 个未聚类人脸，开始聚类...`)
+
+    if (unclusteredCount === 0) {
+      return { success: true, matched: 0, personsCreated: 0, message: '没有需要聚类的人脸' }
+    }
+
+    try {
+      const matchResult = await faceMatchingService.autoMatch({
+        threshold: 0.45,
+        onProgress: (current, total) => {
+          console.log(`[FaceMatching] 聚类进度: ${current}/${total}`)
+        }
+      })
+
+      console.log(`[FaceMatching] 聚类完成: ${matchResult.matched} 张人脸已匹配, 创建 ${matchResult.personsCreated} 位人物`)
+
+      return {
+        success: true,
+        matched: matchResult.matched,
+        personsCreated: matchResult.personsCreated || 0,
+        message: matchResult.message
+      }
+    } catch (error) {
+      console.error('[FaceMatching] 聚类失败:', error)
+      return {
+        success: false,
+        matched: 0,
+        personsCreated: 0,
+        message: error instanceof Error ? error.message : '聚类失败'
+      }
+    }
+  }
+
+  /**
    * 🆕 获取当前扫描任务ID
    */
   getCurrentJobId(): string | null {
@@ -265,6 +329,49 @@ export class FaceDetectionQueue {
           // 完成
           scanJobService.completeJob(this.currentJobId, detectedFaces)
           console.log(`[FaceDetectionQueue] 扫描任务完成: ${this.currentJobId}, 检测到 ${detectedFaces} 张人脸`)
+
+          // 🆕 自动触发人脸聚类
+          if (detectedFaces > 0) {
+            console.log('[FaceDetectionQueue] 开始自动聚类...')
+            const clusterStartTime = Date.now()
+            try {
+              const matchResult = await faceMatchingService.autoMatch({
+                threshold: 0.45,
+                onProgress: (current, total) => {
+                  console.log(`[FaceMatching] 聚类进度: ${current}/${total}`)
+                }
+              })
+              const clusterDuration = Date.now() - clusterStartTime
+
+              // 🆕 CTO要求的监控指标
+              const avgFacesPerPerson = matchResult.personsCreated > 0
+                ? matchResult.matched / matchResult.personsCreated
+                : 0
+
+              console.log(`[FaceMatching] 聚类完成: ${matchResult.matched} 张人脸已匹配, 创建 ${matchResult.personsCreated} 位人物`)
+              console.log(`[Analytics] face_clustering_completed:`, {
+                total_faces: detectedFaces,
+                matched_faces: matchResult.matched,
+                persons_created: matchResult.personsCreated,
+                avg_faces_per_person: avgFacesPerPerson.toFixed(2),
+                clustering_duration_ms: clusterDuration,
+                threshold_used: 0.45
+              })
+
+              // 🆕 健康阈值告警（CTO要求）
+              if (avgFacesPerPerson > 20) {
+                console.warn(`[Analytics] ⚠️ 聚类过于激进: avg_faces_per_person=${avgFacesPerPerson.toFixed(2)} > 20`)
+              }
+              if (matchResult.personsCreated > 0 && matchResult.matched / detectedFaces < 0.1) {
+                console.warn(`[Analytics] ⚠️ 聚类过于保守: match_rate=${(matchResult.matched / detectedFaces).toFixed(2)} < 0.1`)
+              }
+              if (clusterDuration > 30000) {
+                console.warn(`[Analytics] ⚠️ 聚类性能瓶颈: duration=${clusterDuration}ms > 30000ms`)
+              }
+            } catch (clusterError) {
+              console.error('[FaceMatching] 聚类失败:', clusterError)
+            }
+          }
         }
 
         this.currentJobId = null
@@ -336,8 +443,41 @@ export class FaceDetectionQueue {
         throw new Error('任务缺少 photoId')
       }
 
-      // 执行检测
-      const result = await this.service.detect(task.filePath)
+      // 🚨 CTO诊断：检查文件路径和存在性
+      const fs = await import('fs')
+      console.log(`[DEBUG] 🎯 开始检测: ${task.photoId}`)
+      console.log(`[DEBUG] 📁 原始路径: ${task.filePath}`)
+      console.log(`[DEBUG] 🔍 路径类型: ${task.filePath?.startsWith('local-resource://') ? '协议URL' : '绝对路径'}`)
+
+      // 转换协议路径为本地路径
+      const absolutePath = task.filePath?.startsWith('local-resource://')
+        ? task.filePath.replace('local-resource://', '')
+        : task.filePath
+      console.log(`[DEBUG] 📂 转换后路径: ${absolutePath}`)
+
+      // 检查文件存在性
+      const exists = fs.existsSync(absolutePath)
+      console.log(`[DEBUG] 📂 文件存在: ${exists}`)
+
+      if (!exists) {
+        console.error(`[DEBUG] ❌ 文件不存在，跳过检测: ${absolutePath}`)
+        task.status = 'failed'
+        task.error = '文件不存在'
+        task.faces = 0
+        return
+      }
+
+      // 执行检测（使用转换后的绝对路径）
+      console.log(`[DEBUG] 🤖 调用检测模型...`)
+      const result = await this.service.detect(absolutePath)
+      console.log(`[DEBUG] ✅ 检测完成: success=${result.success}, detections=${result.detections.length}`)
+
+      // 添加检测结果分析
+      if (!result.success) {
+        console.error(`[DEBUG] 💥 检测失败: ${result.error}`)
+      } else if (result.detections.length === 0) {
+        console.warn(`[DEBUG] ⚠️ 检测成功但返回0张人脸 - 可能原因: 模型未加载/图片模糊/无人脸`)
+      }
 
       if (result.success && result.detections.length > 0) {
         // 安全解析 photoId 为数字
@@ -365,9 +505,11 @@ export class FaceDetectionQueue {
         task.faces = faces.length
 
         console.log(`[FaceDetectionQueue] 检测到 ${faces.length} 张人脸: ${task.photoId}`)
+        console.log(`[DEBUG] 💾 已保存到数据库: ${faces.length} 张人脸, photoId=${photoIdNum}`)
       } else {
         task.faces = 0
         console.log(`[FaceDetectionQueue] 未检测到人脸: ${task.photoId}`)
+        console.log(`[DEBUG] ⚠️ 检测结果为空: success=${result.success}, error=${result.error || '无'}`)
       }
 
       task.status = 'completed'

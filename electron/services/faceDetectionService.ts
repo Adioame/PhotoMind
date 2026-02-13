@@ -78,7 +78,11 @@ export class FaceDetectionService {
   private tfBackendReady = false
 
   constructor(config?: FaceDetectionServiceConfig) {
-    this.modelsPath = config?.modelsPath || resolve(process.cwd(), 'models/face-api')
+    // 使用 @vladmandic/face-api 包内的模型路径
+    this.modelsPath = config?.modelsPath || resolve(
+      process.cwd(),
+      'node_modules/@vladmandic/face-api/model'
+    )
     if (config?.minConfidence) this.minConfidence = config.minConfidence
     if (config?.maxFaces) this.maxFaces = config.maxFaces
   }
@@ -113,6 +117,7 @@ export class FaceDetectionService {
       await this.ensureTfBackend()
 
       console.log('[FaceDetection] 加载 face-api.js 模型...')
+      console.log(`[FaceDetection] 📁 模型路径: ${this.modelsPath}`)
 
       // 检查模型文件是否存在
       const requiredModels = [
@@ -123,7 +128,9 @@ export class FaceDetectionService {
 
       for (const model of requiredModels) {
         const modelPath = resolve(this.modelsPath, model)
-        if (!existsSync(modelPath)) {
+        const exists = existsSync(modelPath)
+        console.log(`[FaceDetection] ${exists ? '✅' : '❌'} ${model}`)
+        if (!exists) {
           return { success: false, error: `模型文件不存在: ${model}` }
         }
       }
@@ -162,8 +169,11 @@ export class FaceDetectionService {
     const startTime = Date.now()
     const { minConfidence = this.minConfidence } = options
 
+    console.log(`[FaceDetection] 🎯 开始检测: ${imagePath.split('/').pop()}`)
+
     // 检查文件是否存在
     if (!existsSync(imagePath)) {
+      console.error(`[FaceDetection] ❌ 文件不存在: ${imagePath}`)
       return {
         success: false,
         detections: [],
@@ -176,6 +186,7 @@ export class FaceDetectionService {
       // 确保模型已加载
       const loadResult = await this.loadModels()
       if (!loadResult.success) {
+        console.error(`[FaceDetection] ❌ 模型加载失败: ${loadResult.error}`)
         return {
           success: false,
           detections: [],
@@ -183,6 +194,8 @@ export class FaceDetectionService {
           processingTimeMs: Date.now() - startTime
         }
       }
+
+      console.log(`[FaceDetection] 🤖 模型就绪，开始处理图像...`)
 
       // 加载图片并转换为 tensor
       const { data, info } = await sharp(imagePath)
@@ -219,6 +232,7 @@ export class FaceDetectionService {
         )
 
         detections = await Promise.race([detectionPromise, timeoutPromise])
+        console.log(`[FaceDetection] 📊 原始检测结果: ${detections.length} 张人脸`)
       } finally {
         // 确保 tensor 被释放
         imageTensor.dispose()
@@ -239,10 +253,12 @@ export class FaceDetectionService {
           descriptor: Array.from(d.descriptor)  // Float32Array -> number[] (128维)
         }))
 
+      console.log(`[FaceDetection] 📊 有有效描述符的人脸: ${faces.length}/${detections.length}`)
+
       // 限制最大人脸数
       const limitedFaces = faces.slice(0, this.maxFaces)
 
-      console.log(`[FaceDetection] 检测到 ${limitedFaces.length} 张人脸: ${imagePath}`)
+      console.log(`[FaceDetection] ✅ 检测完成: ${limitedFaces.length} 张人脸 (${Date.now() - startTime}ms)`)
 
       return {
         success: true,
