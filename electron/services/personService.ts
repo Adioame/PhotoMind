@@ -47,15 +47,27 @@ export interface TagPersonParams {
 
 export class PersonService {
   private database: PhotoDatabase
+  private dbInitialized: boolean = false
 
   constructor(database?: PhotoDatabase) {
     this.database = database || new PhotoDatabase()
   }
 
   /**
+   * 确保数据库已初始化
+   */
+  private async ensureDb(): Promise<void> {
+    if (!this.dbInitialized) {
+      await this.database.init()
+      this.dbInitialized = true
+    }
+  }
+
+  /**
    * 获取所有人物
    */
-  getAllPersons(): Person[] {
+  async getAllPersons(): Promise<Person[]> {
+    await this.ensureDb()
     const persons = this.database.getAllPersons()
     return persons.map((p: any) => ({
       id: p.id,
@@ -70,7 +82,8 @@ export class PersonService {
   /**
    * 根据 ID 获取人物
    */
-  getPersonById(id: number): Person | null {
+  async getPersonById(id: number): Promise<Person | null> {
+    await this.ensureDb()
     const person = this.database.getPersonById(id)
     if (!person) return null
 
@@ -87,10 +100,11 @@ export class PersonService {
   /**
    * 添加新人物
    */
-  addPerson(params: AddPersonParams): { success: boolean; personId?: number; error?: string } {
+  async addPerson(params: AddPersonParams): Promise<{ success: boolean; personId?: number; error?: string }> {
     try {
+      await this.ensureDb()
       // 检查是否已存在（不区分大小写）
-      const existing = this.searchPersons(params.name)
+      const existing = await this.searchPersons(params.name)
       const normalizedName = params.name.toLowerCase().trim()
       const found = existing.find(p => p.name.toLowerCase() === normalizedName)
 
@@ -120,7 +134,8 @@ export class PersonService {
   /**
    * 更新人物信息
    */
-  updatePerson(id: number, params: Partial<AddPersonParams>): boolean {
+  async updatePerson(id: number, params: Partial<AddPersonParams>): Promise<boolean> {
+    await this.ensureDb()
     return this.database.updatePerson(id, {
       name: params.name,
       displayName: params.displayName
@@ -130,8 +145,9 @@ export class PersonService {
   /**
    * 删除人物
    */
-  deletePerson(id: number): boolean {
+  async deletePerson(id: number): Promise<boolean> {
     try {
+      await this.ensureDb()
       this.database.run('DELETE FROM faces WHERE person_id = ?', [id])
       this.database.run('DELETE FROM persons WHERE id = ?', [id])
       console.log(`[PersonService] 删除人物 ID: ${id}`)
@@ -145,7 +161,8 @@ export class PersonService {
   /**
    * 搜索人物
    */
-  searchPersons(query: string): Person[] {
+  async searchPersons(query: string): Promise<Person[]> {
+    await this.ensureDb()
     const results = this.database.searchPersons(query)
     return results.map((p: any) => ({
       id: p.id,
@@ -160,8 +177,9 @@ export class PersonService {
   /**
    * 为照片标记人物
    */
-  tagPerson(params: TagPersonParams): { success: boolean; tagId?: number; error?: string } {
+  async tagPerson(params: TagPersonParams): Promise<{ success: boolean; tagId?: number; error?: string }> {
     try {
+      await this.ensureDb()
       // 验证照片存在
       const photo = this.database.getPhotoById(params.photoId)
       if (!photo) {
@@ -191,7 +209,7 @@ export class PersonService {
       })
 
       // 更新人物 face_count
-      this.updatePersonFaceCount(params.personId)
+      await this.updatePersonFaceCount(params.personId)
 
       console.log(`[PersonService] 为照片 ${params.photoId} 标记人物: ${person.name}`)
       return { success: true, tagId }
@@ -207,13 +225,14 @@ export class PersonService {
   /**
    * 移除照片的人物标签
    */
-  untagPerson(photoId: number, personId: number): boolean {
+  async untagPerson(photoId: number, personId: number): Promise<boolean> {
     try {
+      await this.ensureDb()
       this.database.run(
         'DELETE FROM faces WHERE photo_id = ? AND person_id = ?',
         [photoId, personId]
       )
-      this.updatePersonFaceCount(personId)
+      await this.updatePersonFaceCount(personId)
       console.log(`[PersonService] 移除照片 ${photoId} 的人物标签`)
       return true
     } catch (error) {
@@ -225,7 +244,8 @@ export class PersonService {
   /**
    * 获取照片的所有人物标签
    */
-  getPhotoTags(photoId: number): PersonTag[] {
+  async getPhotoTags(photoId: number): Promise<PersonTag[]> {
+    await this.ensureDb()
     const faces = this.database.getFacesByPhoto(photoId)
     return faces.map((f: any) => ({
       id: f.id,
@@ -241,21 +261,23 @@ export class PersonService {
   /**
    * 获取某人物的所有照片
    */
-  getPersonPhotos(personId: number): any[] {
+  async getPersonPhotos(personId: number): Promise<any[]> {
+    await this.ensureDb()
     return this.database.getPhotosByPerson(personId)
   }
 
   /**
    * 根据人物名称搜索照片
    */
-  searchPhotosByPerson(personName: string): any[] {
+  async searchPhotosByPerson(personName: string): Promise<any[]> {
+    await this.ensureDb()
     return this.database.searchPhotosByPerson(personName)
   }
 
   /**
    * 更新人物 face_count
    */
-  private updatePersonFaceCount(personId: number): void {
+  private async updatePersonFaceCount(personId: number): Promise<void> {
     const photos = this.database.getPhotosByPerson(personId)
     this.database.run(
       'UPDATE persons SET face_count = ? WHERE id = ?',
@@ -266,8 +288,9 @@ export class PersonService {
   /**
    * 获取人物统计
    */
-  getStats(): { totalPersons: number; totalTags: number } {
-    const persons = this.getAllPersons()
+  async getStats(): Promise<{ totalPersons: number; totalTags: number }> {
+    await this.ensureDb()
+    const persons = await this.getAllPersons()
     const totalTags = persons.reduce((sum, p) => sum + p.face_count, 0)
     return {
       totalPersons: persons.length,
@@ -278,12 +301,12 @@ export class PersonService {
   /**
    * 批量标记人物
    */
-  tagPersons(photoId: number, personIds: number[]): { success: boolean; tagged: number; errors: string[] } {
+  async tagPersons(photoId: number, personIds: number[]): Promise<{ success: boolean; tagged: number; errors: string[] }> {
     let tagged = 0
     const errors: string[] = []
 
     for (const personId of personIds) {
-      const result = this.tagPerson({ photoId, personId })
+      const result = await this.tagPerson({ photoId, personId })
       if (result.success) {
         tagged++
       } else if (result.error) {
@@ -297,17 +320,18 @@ export class PersonService {
   /**
    * 移除照片的所有人物标签
    */
-  untagAllPersons(photoId: number): boolean {
+  async untagAllPersons(photoId: number): Promise<boolean> {
     try {
+      await this.ensureDb()
       // 获取所有标签以更新对应的 person face_count
-      const tags = this.getPhotoTags(photoId)
+      const tags = await this.getPhotoTags(photoId)
       const personIds = [...new Set(tags.map(t => t.person_id))]
 
       this.database.run('DELETE FROM faces WHERE photo_id = ?', [photoId])
 
       // 更新每个相关人物的 face_count
       for (const personId of personIds) {
-        this.updatePersonFaceCount(personId)
+        await this.updatePersonFaceCount(personId)
       }
 
       console.log(`[PersonService] 移除照片 ${photoId} 的所有人物标签`)

@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('photoAPI', {
   // 人物相关
   people: {
     getAll: () => ipcRenderer.invoke('people:get-all'),
+    getById: (id: number) => ipcRenderer.invoke('people:get-by-id', id),
     add: (person: { name: string; displayName?: string }) =>
       ipcRenderer.invoke('people:add', person),
     update: (id: number, person: { name?: string; displayName?: string }) =>

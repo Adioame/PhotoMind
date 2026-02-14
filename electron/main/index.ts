@@ -2,7 +2,8 @@
  * PhotoMind - Electron 主进程入口
  */
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
-import { resolve, dirname, basename } from 'path'
+import { resolve, dirname, basename, join } from 'path'
+import { readFileSync, existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { ICloudService } from '../services/iCloudService.js'
 import { PhotoDatabase } from '../database/db.js'
@@ -71,37 +72,66 @@ const isDev = !app.isPackaged
  * 注册本地资源自定义协议
  * 将 local-resource:// 协议映射到本地文件系统路径
  * 这样可以绕过浏览器的 file:// 协议安全限制
+ *
+ * 支持的路径格式：
+ * 1. 绝对路径：local-resource:///Users/mac/PhotoMind/data/cache/photo.jpg → /Users/mac/PhotoMind/data/cache/photo.jpg
+ * 2. 人脸头像（相对路径）：local-resource://thumbnails/faces/xxx.jpg → userData/thumbnails/faces/xxx.jpg
+ * 3. 照片（相对路径）：local-resource://photo.jpg → userData/photos/photo.jpg
  */
 function registerLocalResourceProtocol() {
-  // 🆕 使用 handle API 替代 registerFileProtocol（Electron 25+ 推荐）
+  // 使用 handle API（Electron 25+ 推荐）
   protocol.handle('local-resource', async (request) => {
     try {
       // 移除协议前缀
       const url = request.url.replace(/^local-resource:\/\//, '')
-
-      // 解码 URL 编码的路径（处理中文等特殊字符）
+      // 解码 URL 编码的路径（处理空格、中文等特殊字符）
       const decodedUrl = decodeURIComponent(url)
+      const userDataPath = app.getPath('userData')
 
-      console.log(`[local-resource] 请求: ${decodedUrl}`)
+      let filePath: string
+      let pathType: string
 
-      // 🆕 检查文件是否存在
-      const fs = await import('fs')
-      if (!fs.existsSync(decodedUrl)) {
-        console.error(`[local-resource] 文件不存在: ${decodedUrl}`)
+      // 标准化路径：处理相对路径的前导斜杠（但保留绝对路径）
+      const normalizedUrl = decodedUrl.startsWith('/') && decodedUrl.length > 1
+        ? decodedUrl  // 绝对路径保留开头的斜杠
+        : decodedUrl.replace(/^\/+/, '')
+
+      // 分支 1：人脸头像（相对路径 → userData）
+      if (normalizedUrl.startsWith('thumbnails/faces/')) {
+        filePath = join(userDataPath, normalizedUrl)
+        pathType = '人脸头像'
+      }
+      // 分支 2：照片缩略图（相对路径 → userData/cache/thumbnails/）
+      else if (normalizedUrl.startsWith('thumbnails/')) {
+        filePath = join(userDataPath, normalizedUrl)
+        pathType = '照片缩略图'
+      }
+      // 分支 3：绝对路径 → 直接使用
+      else if (normalizedUrl.startsWith('/') || /^[a-zA-Z]:\\/.test(normalizedUrl)) {
+        filePath = normalizedUrl
+        pathType = '绝对路径'
+      }
+      // 分支 4：其他相对路径 → userData/photos/
+      else {
+        filePath = join(userDataPath, 'photos', normalizedUrl)
+        pathType = '照片'
+      }
+
+      // 验证文件存在
+      if (!existsSync(filePath)) {
+        console.error(`[Protocol] [${pathType}] 文件不存在: ${filePath}`)
         return new Response('File not found', { status: 404 })
       }
 
-      console.log(`[local-resource] 文件存在，返回: ${decodedUrl.substring(0, 60)}...`)
-
-      // 使用 net.fetch 返回文件内容
-      return await net.fetch('file://' + decodedUrl)
+      console.log(`[Protocol] [${pathType}] 成功: ${filePath}`)
+      return await net.fetch('file://' + filePath)
     } catch (error) {
-      console.error('[local-resource] 处理失败:', error)
-      return new Response('Not found', { status: 404 })
+      console.error('[Protocol] 处理失败:', request.url, error)
+      return new Response('Internal Server Error', { status: 500 })
     }
   })
 
-  console.log('✓ 自定义协议 local-resource:// 已注册 (handle API)')
+  console.log('✓ 自定义协议 local-resource:// 已注册')
 }
 
 // 路径辅助函数 - 适配 Electron-Forge
@@ -607,6 +637,23 @@ function setupIPCHandlers() {
     }
   })
 
+  // 根据 ID 获取人物
+  ipcMain.handle('people:get-by-id', async (_, id: number) => {
+    console.log('[IPC people:get-by-id] 收到 id:', id, '类型:', typeof id)
+    try {
+      if (!database) {
+        console.log('[IPC people:get-by-id] database 不存在')
+        return null
+      }
+      const person = database.getPersonById(id)
+      console.log('[IPC people:get-by-id] 查询结果:', person)
+      return person
+    } catch (error) {
+      console.error('[IPC people:get-by-id] 异常:', error)
+      return null
+    }
+  })
+
   // 添加人物
   ipcMain.handle('people:add', async (event, person) => {
     try {
@@ -650,7 +697,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:update', async (event, id: number, person: { name?: string; displayName?: string }) => {
     try {
       const { personService } = await import('../services/personService.js')
-      const success = personService.updatePerson(id, person)
+      const success = await personService.updatePerson(id, person)
       return { success }
     } catch (error) {
       console.error('[IPC] 更新人物失败:', error)
@@ -662,7 +709,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:delete', async (event, id: number) => {
     try {
       const { personService } = await import('../services/personService.js')
-      const success = personService.deletePerson(id)
+      const success = await personService.deletePerson(id)
       return { success }
     } catch (error) {
       console.error('[IPC] 删除人物失败:', error)
@@ -674,7 +721,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:tag', async (event, params: { photoId: number; personId: number; boundingBox?: any }) => {
     try {
       const { personService } = await import('../services/personService.js')
-      const result = personService.tagPerson(params)
+      const result = await personService.tagPerson(params)
       return result
     } catch (error) {
       console.error('[IPC] 标记人物失败:', error)
@@ -686,7 +733,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:untag', async (event, photoId: number, personId: number) => {
     try {
       const { personService } = await import('../services/personService.js')
-      const success = personService.untagPerson(photoId, personId)
+      const success = await personService.untagPerson(photoId, personId)
       return { success }
     } catch (error) {
       console.error('[IPC] 移除标签失败:', error)
@@ -698,7 +745,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:get-photo-tags', async (event, photoId: number) => {
     try {
       const { personService } = await import('../services/personService.js')
-      return personService.getPhotoTags(photoId)
+      return await personService.getPhotoTags(photoId)
     } catch (error) {
       console.error('[IPC] 获取照片标签失败:', error)
       return []
@@ -709,7 +756,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:get-person-photos', async (event, personId: number) => {
     try {
       const { personService } = await import('../services/personService.js')
-      return personService.getPersonPhotos(personId)
+      return await personService.getPersonPhotos(personId)
     } catch (error) {
       console.error('[IPC] 获取人物照片失败:', error)
       return []
@@ -720,7 +767,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:get-stats', async () => {
     try {
       const { personService } = await import('../services/personService.js')
-      return personService.getStats()
+      return await personService.getStats()
     } catch (error) {
       console.error('[IPC] 获取统计失败:', error)
       return { totalPersons: 0, totalTags: 0 }
@@ -2330,12 +2377,16 @@ function setupIPCHandlers() {
 
   // 获取人物照片
   ipcMain.handle('people:get-photos', async (_, filter: { personId: number; year?: number; month?: number; limit?: number; offset?: number }) => {
+    console.log('[IPC people:get-photos] 收到 filter:', JSON.stringify(filter))
+    console.log('[IPC people:get-photos] personId:', filter.personId, '类型:', typeof filter.personId)
     try {
       const { personSearchService } = await import('../services/personSearchService.js')
-      return await personSearchService.getPersonPhotos(filter)
+      const result = await personSearchService.getPersonPhotos(filter)
+      console.log('[IPC people:get-photos] 返回 result:', result ? `对象(${result.photos?.length || 0}张)` : 'null')
+      return result
     } catch (error) {
-      console.error('[IPC] 获取人物照片失败:', error)
-      return null
+      console.error('[IPC people:get-photos] 异常:', error)
+      throw error
     }
   })
 
@@ -2354,7 +2405,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:get-suggestions', async (_, query: string, limit?: number) => {
     try {
       const { personSearchService } = await import('../services/personSearchService.js')
-      return personSearchService.getSuggestions(query, limit)
+      return await personSearchService.getSuggestions(query, limit)
     } catch (error) {
       console.error('[IPC] 获取建议失败:', error)
       return []
@@ -2365,7 +2416,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:get-popular', async (_, limit?: number) => {
     try {
       const { personSearchService } = await import('../services/personSearchService.js')
-      return personSearchService.getPopularPersons(limit)
+      return await personSearchService.getPopularPersons(limit)
     } catch (error) {
       console.error('[IPC] 获取热门人物失败:', error)
       return []
@@ -2376,7 +2427,7 @@ function setupIPCHandlers() {
   ipcMain.handle('people:get-search-stats', async () => {
     try {
       const { personSearchService } = await import('../services/personSearchService.js')
-      return personSearchService.getStats()
+      return await personSearchService.getStats()
     } catch (error) {
       return { totalPersons: 0, totalTaggedPhotos: 0, avgPhotosPerPerson: 0 }
     }

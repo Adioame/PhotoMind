@@ -9,6 +9,7 @@ export interface Person {
   name: string
   display_name?: string
   face_count: number
+  avatar_path?: string
   created_at?: string
   is_manual?: number
 }
@@ -122,16 +123,21 @@ export const usePeopleStore = defineStore('people', () => {
    * 🆕 根据 ID 获取人物信息
    */
   async function getPersonById(personId: number): Promise<Person | null> {
+    console.log('[PeopleStore] getPersonById 收到:', personId, '类型:', typeof personId)
     // 如果本地已有，直接返回
     const cached = people.value.find(p => p.id === personId)
-    if (cached) return cached
+    if (cached) {
+      console.log('[PeopleStore] 使用缓存:', cached)
+      return cached
+    }
 
     // 否则从 API 获取
     try {
       const result = await (window as any).photoAPI.people.getById?.(personId)
+      console.log('[PeopleStore] API 返回:', result)
       return result || null
     } catch (error) {
-      console.error('获取人物详情失败:', error)
+      console.error('[PeopleStore] 获取人物详情失败:', error)
       return null
     }
   }

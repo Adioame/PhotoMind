@@ -10,6 +10,43 @@
 import { PhotoDatabase } from '../database/db.js'
 import { personService, Person } from './personService.js'
 
+/**
+ * 将照片对象的 snake_case 字段转换为 camelCase
+ * 以兼容前端 PhotoGrid 组件
+ */
+function normalizePhotoFields(photo: any): any {
+  if (!photo) return photo
+
+  return {
+    id: photo.id,
+    uuid: photo.uuid,
+    cloudId: photo.cloud_id,
+    filePath: photo.file_path,
+    fileName: photo.file_name,
+    fileSize: photo.file_size,
+    width: photo.width,
+    height: photo.height,
+    takenAt: photo.taken_at,
+    createdAt: photo.created_at,
+    thumbnailPath: photo.thumbnail_path,
+    status: photo.status,
+    // location 字段需要从 location_data 转换
+    location: photo.location_data ? {
+      name: photo.location_data.name,
+      latitude: photo.location_data.latitude,
+      longitude: photo.location_data.longitude
+    } : null,
+    // exif 字段需要从 exif_data 转换
+    exif: photo.exif_data ? {
+      camera: photo.exif_data.cameraModel,
+      lens: photo.exif_data.lensModel,
+      iso: photo.exif_data.iso,
+      aperture: photo.exif_data.fNumber,
+      shutterSpeed: photo.exif_data.exposureTime
+    } : null
+  }
+}
+
 export interface PersonSearchOptions {
   query: string
   limit?: number
@@ -83,7 +120,7 @@ export class PersonSearchService {
 
     console.log(`[PersonSearch] 搜索人物: "${query}"`)
 
-    const allPersons = personService.getAllPersons()
+    const allPersons = await personService.getAllPersons()
 
     if (!query || query.trim() === '') {
       const sorted = this.sortPersons(allPersons, sortBy)
@@ -203,40 +240,60 @@ export class PersonSearchService {
    * 获取某人物的照片
    */
   async getPersonPhotos(filter: PersonPhotoFilter): Promise<PersonPhotosResponse> {
-    const { personId, year, month, limit = 50, offset = 0 } = filter
+    let { personId, year, month, limit = 50, offset = 0 } = filter
 
+    // 确保 personId 是 number 类型
+    if (typeof personId === 'string') {
+      personId = parseInt(personId, 10)
+    }
     console.log(`[PersonSearch] 获取人物 ${personId} 的照片`)
+    console.log(`[PersonSearch] 类型: ${typeof personId}`)
 
-    const person = personService.getPersonById(personId)
+    const person = await personService.getPersonById(personId)
     if (!person) {
       throw new Error('人物不存在')
     }
+    console.log(`[PersonSearch] 找到人物: ${person.name}`)
 
-    let photos = personService.getPersonPhotos(personId)
+    let photos = await personService.getPersonPhotos(personId)
+    console.log(`[PersonSearch] getPersonPhotos 返回: ${photos.length} 张照片`)
 
+    if (photos.length > 0) {
+      console.log(`[PersonSearch] 第一张照片:`, JSON.stringify(photos[0]))
+    }
+
+    // ===== 年份筛选 =====
     if (year) {
+      console.log(`[PersonSearch] 应用年份筛选: ${year}`)
       photos = photos.filter((p: any) => {
         const takenAt = p.taken_at || p.takenAt
         if (!takenAt) return false
         return new Date(takenAt).getFullYear() === year
       })
+      console.log(`[PersonSearch] 年份筛选后: ${photos.length} 张`)
     }
 
+    // ===== 月份筛选 =====
     if (month !== undefined && year) {
+      console.log(`[PersonSearch] 应用月份筛选: ${year}/${month + 1}`)
       photos = photos.filter((p: any) => {
         const takenAt = p.taken_at || p.takenAt
         if (!takenAt) return false
         const date = new Date(takenAt)
         return date.getFullYear() === year && date.getMonth() === month
       })
+      console.log(`[PersonSearch] 月份筛选后: ${photos.length} 张`)
     }
 
+    // ===== 排序 =====
     photos.sort((a: any, b: any) => {
       const dateA = new Date(a.taken_at || a.takenAt || 0).getTime()
       const dateB = new Date(b.taken_at || b.takenAt || 0).getTime()
       return dateB - dateA
     })
+    console.log(`[PersonSearch] 排序后: ${photos.length} 张`)
 
+    // ===== 年份统计 =====
     const years = new Set<number>()
     let earliest: string | undefined
     let latest: string | undefined
@@ -253,14 +310,30 @@ export class PersonSearchService {
 
     const total = photos.length
     const paged = photos.slice(offset, offset + limit)
+    console.log(`[PersonSearch] 分页: ${offset}-${offset + limit}, 返回 ${paged.length} 张`)
+
+    // ===== 字段转换 =====
+    console.log(`[PersonSearch] 开始字段转换...`)
+    const normalizedPhotos = paged.map((p: any) => {
+      try {
+        const normalized = normalizePhotoFields(p)
+        console.log(`[PersonSearch] 转换第 ${paged.indexOf(p) + 1} 张:`, normalized.id, normalized.fileName)
+        return {
+          photo: normalized,
+          taggedAt: p.created_at || new Date().toISOString(),
+          confidence: 1.0
+        }
+      } catch (e) {
+        console.error(`[PersonSearch] 转换失败:`, e)
+        throw e
+      }
+    })
+
+    console.log(`[PersonSearch] 转换完成，共 ${normalizedPhotos.length} 张`)
 
     return {
       person,
-      photos: paged.map((p: any) => ({
-        photo: p,
-        taggedAt: p.created_at || new Date().toISOString(),
-        confidence: 1.0
-      })),
+      photos: normalizedPhotos,
       total,
       stats: {
         totalPhotos: total,
@@ -275,7 +348,7 @@ export class PersonSearchService {
    * 获取人物时间线
    */
   async getPersonTimeline(personId: number): Promise<Map<number, number[]>> {
-    const photos = personService.getPersonPhotos(personId)
+    const photos = await personService.getPersonPhotos(personId)
     const timeline = new Map<number, number[]>()
 
     for (const photo of photos) {
@@ -297,8 +370,8 @@ export class PersonSearchService {
   /**
    * 获取搜索建议
    */
-  getSuggestions(query: string, limit: number = 5): PersonSuggestion[] {
-    const persons = personService.getAllPersons()
+  async getSuggestions(query: string, limit: number = 5): Promise<PersonSuggestion[]> {
+    const persons = await personService.getAllPersons()
     const searchTerm = query.toLowerCase()
 
     return persons
@@ -317,8 +390,8 @@ export class PersonSearchService {
   /**
    * 获取热门人物
    */
-  getPopularPersons(limit: number = 10): Person[] {
-    const persons = personService.getAllPersons()
+  async getPopularPersons(limit: number = 10): Promise<Person[]> {
+    const persons = await personService.getAllPersons()
     return persons
       .sort((a, b) => b.face_count - a.face_count)
       .slice(0, limit)
@@ -355,13 +428,13 @@ export class PersonSearchService {
   /**
    * 获取人物统计
    */
-  getStats(): {
+  async getStats(): Promise<{
     totalPersons: number
     totalTaggedPhotos: number
     avgPhotosPerPerson: number
     mostTaggedPerson?: Person
-  } {
-    const persons = personService.getAllPersons()
+  }> {
+    const persons = await personService.getAllPersons()
     const totalTaggedPhotos = persons.reduce((sum, p) => sum + p.face_count, 0)
 
     let mostTagged: Person | undefined

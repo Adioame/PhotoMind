@@ -308,7 +308,26 @@ export class PhotoDatabase {
         this.db.run('ALTER TABLE detected_faces ADD COLUMN vector_version INTEGER DEFAULT 0')
       }
 
+      // 迁移 v4: 添加 face_thumbnail_path 列
+      if (!columns.includes('face_thumbnail_path')) {
+        console.log('[Database] 迁移: 添加 face_thumbnail_path 列')
+        this.db.run('ALTER TABLE detected_faces ADD COLUMN face_thumbnail_path TEXT')
+      }
+
       console.log('[Database] 迁移完成')
+
+      // 检查 persons 表是否需要添加 avatar_path 列
+      try {
+        const personTableInfo = this.db.exec("PRAGMA table_info(persons)")
+        const personColumns = personTableInfo[0]?.values.map((row: any) => row[1]) || []
+
+        if (!personColumns.includes('avatar_path')) {
+          console.log('[Database] 迁移: 添加 persons.avatar_path 列')
+          this.db.run('ALTER TABLE persons ADD COLUMN avatar_path TEXT')
+        }
+      } catch (e) {
+        console.error('[Database] 检查 persons 表失败:', e)
+      }
     } catch (error) {
       console.error('[Database] 迁移失败:', error)
     }
@@ -554,6 +573,14 @@ export class PhotoDatabase {
     `)
   }
 
+  /**
+   * 获取人物头像路径
+   */
+  getPersonAvatarPath(personId: number): string | null {
+    const rows = this.query('SELECT avatar_path FROM persons WHERE id = ?', [personId])
+    return rows[0]?.avatar_path || null
+  }
+
   getPersonById(id: number): any {
     const rows = this.query('SELECT * FROM persons WHERE id = ?', [id])
     return rows.length > 0 ? rows[0] : null
@@ -652,6 +679,7 @@ export class PhotoDatabase {
     face_embedding?: number[]
     semantic_embedding?: number[]
     vector_version?: number
+    face_thumbnail_path?: string
   }>): number {
     let savedCount = 0
 
@@ -673,8 +701,8 @@ export class PhotoDatabase {
           : null
 
         this.run(
-          `INSERT INTO detected_faces (id, photo_id, bbox_x, bbox_y, bbox_width, bbox_height, confidence, embedding, face_embedding, semantic_embedding, vector_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO detected_faces (id, photo_id, bbox_x, bbox_y, bbox_width, bbox_height, confidence, embedding, face_embedding, semantic_embedding, vector_version, face_thumbnail_path, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             face.id,
             photoId,
@@ -687,6 +715,7 @@ export class PhotoDatabase {
             faceEmbeddingBuffer,
             semanticEmbeddingBuffer,
             face.vector_version || 0,
+            face.face_thumbnail_path || null,
             new Date().toISOString()
           ]
         )
@@ -827,6 +856,42 @@ export class PhotoDatabase {
       return true
     } catch (error) {
       console.error('[Database] 标记检测人脸处理失败:', error)
+      return false
+    }
+  }
+
+  /**
+   * 更新人脸缩略图路径
+   * @param faceId 人脸ID
+   * @param thumbnailPath 缩略图路径
+   */
+  updateFaceThumbnail(faceId: string, thumbnailPath: string): boolean {
+    try {
+      this.run(
+        'UPDATE detected_faces SET face_thumbnail_path = ? WHERE id = ?',
+        [thumbnailPath, faceId]
+      )
+      return true
+    } catch (error) {
+      console.error('[Database] 更新人脸缩略图路径失败:', error)
+      return false
+    }
+  }
+
+  /**
+   * 更新人物头像路径
+   * @param personId 人物ID
+   * @param avatarPath 头像路径
+   */
+  updatePersonAvatar(personId: number, avatarPath: string): boolean {
+    try {
+      this.run(
+        'UPDATE persons SET avatar_path = ? WHERE id = ?',
+        [avatarPath, personId]
+      )
+      return true
+    } catch (error) {
+      console.error('[Database] 更新人物头像路径失败:', error)
       return false
     }
   }

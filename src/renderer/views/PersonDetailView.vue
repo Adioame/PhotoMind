@@ -40,7 +40,7 @@
           </n-avatar>
           <div class="person-meta">
             <h1>{{ displayName }}</h1>
-            <p class="photo-count">{{ photos.length }} 张照片</p>
+            <p class="photo-count">{{ resultTotal || photos.length }} 张照片</p>
           </div>
         </div>
 
@@ -153,8 +153,10 @@ const peopleStore = usePeopleStore()
 // 状态
 const person = ref<Person | null>(null)
 const photos = ref<any[]>([])
+const resultTotal = ref<number | null>(null)
 const loading = ref(false)
 const loadingPhotos = ref(false)
+let isLoadingData = false // 防止竞态条件的执行标志
 
 // 重命名弹窗
 const showRenameModal = ref(false)
@@ -202,39 +204,69 @@ const mergeOptions = computed(() => {
 
 // 加载人物数据
 async function loadPersonData() {
-  const id = Number(props.personId)
-  if (!id) {
-    person.value = null
+  // 防止竞态条件：如果已经在加载中，跳过
+  if (isLoadingData) {
+    console.log('[PersonDetail] 加载已在进行中，跳过重复调用')
     return
   }
 
+  console.log('[PersonDetail] props.personId:', props.personId, '类型:', typeof props.personId)
+  const id = Number(props.personId)
+  console.log('[PersonDetail] 转换后 id:', id, '类型:', typeof id)
+  if (!id) {
+    person.value = null
+    console.log('[PersonDetail] id 无效，跳过')
+    return
+  }
+
+  isLoadingData = true
   loading.value = true
-  loadingPhotos.value = true
 
   try {
     person.value = await peopleStore.getPersonById(id)
+    console.log('[PersonDetail] getPersonById 返回:', person.value)
 
     if (person.value) {
       peopleStore.setLastVisitedPerson(id)
       await loadPersonPhotos(id)
+    } else {
+      console.log('[PersonDetail] 人物不存在，停止加载照片')
     }
   } catch (error) {
-    console.error('加载人物数据失败:', error)
+    console.error('[PersonDetail] 加载人物数据失败:', error)
     message.error('加载人物数据失败')
   } finally {
     loading.value = false
-    loadingPhotos.value = false
+    isLoadingData = false
   }
 }
 
 // 加载人物照片
 async function loadPersonPhotos(personId: number) {
+  loadingPhotos.value = true
   try {
+    console.log(`[PersonDetail] 加载人物 ${personId} 的照片...`)
     const result = await (window as any).photoAPI.people.getPhotos({ personId })
-    photos.value = result?.photos || []
+
+    console.log('[PersonDetail] API 返回结果:', result)
+    console.log('[PersonDetail] photos 数量:', result?.photos?.length || 0)
+    console.log('[PersonDetail] total:', result?.total)
+
+    // 从返回的包装对象中提取 photo 字段
+    photos.value = result?.photos?.map((p: any) => p.photo) || []
+    resultTotal.value = result?.total || photos.value.length
+
+    console.log('[PersonDetail] 提取后的照片数量:', photos.value.length)
+    if (photos.value.length > 0) {
+      console.log('[PersonDetail] 第一张照片数据:', JSON.stringify(photos.value[0], null, 2))
+      console.log('[PersonDetail] thumbnailPath:', photos.value[0]?.thumbnailPath)
+      console.log('[PersonDetail] filePath:', photos.value[0]?.filePath)
+    }
   } catch (error) {
-    console.error('加载人物照片失败:', error)
+    console.error('[PersonDetail] 加载人物照片失败:', error)
     photos.value = []
+  } finally {
+    loadingPhotos.value = false
   }
 }
 
