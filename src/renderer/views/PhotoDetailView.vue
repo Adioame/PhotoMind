@@ -378,37 +378,25 @@ const breadcrumbItems = computed((): BreadcrumbItem[] => {
   ]
 })
 
-// 加载照片 - 优先从 photoStore 缓存获取
+// 加载照片 - 直接调用 API，不依赖缓存
 const loadPhoto = async () => {
   const id = route.params.id as string
   loading.value = true
   error.value = ''
 
   console.log('[PhotoDetailView] 加载照片, ID:', id)
-  console.log('[PhotoDetailView] photoStore.photos 数量:', photoStore.photos.length)
 
-  // 🎯 关键修复：优先从 photoStore 缓存获取（列表页已加载的照片）
-  const cachedPhoto = photoStore.photos.find(p =>
-    String(p.id) === String(id) ||
-    String(p.photo_id) === String(id)
-  )
-
-  if (cachedPhoto) {
-    console.log('[PhotoDetailView] ✅ 从 photoStore 缓存获取:', cachedPhoto.id || cachedPhoto.photo_id)
-    currentPhoto.value = cachedPhoto
-    loading.value = false
-    return
-  }
-
-  // 缓存未命中，尝试从 API 获取
-  console.log('[PhotoDetailView] 缓存未命中，尝试 API 获取...')
+  // 🎯 修正：直接通过 IPC 调用获取照片详情，不依赖 photoStore 缓存
+  // 从人物详情页进入时 photoStore.photos 为空，必须从 API 获取
   try {
-    const detail = await photoStore.fetchPhotoDetail(id)
-    if (detail) {
-      console.log('[PhotoDetailView] API 获取成功:', detail.id)
-      currentPhoto.value = detail
+    const result = await (window as any).photoAPI?.photos?.getDetail(id)
+    console.log('[PhotoDetailView] API 返回:', result)
+
+    if (result && (result.id || result.photo_id)) {
+      console.log('[PhotoDetailView] ✅ 照片加载成功:', result.id || result.photo_id)
+      currentPhoto.value = result
     } else {
-      console.error('[PhotoDetailView] 照片不存在:', id)
+      console.error('[PhotoDetailView] 照片不存在或返回空数据:', id)
       error.value = '照片不存在'
     }
   } catch (err) {

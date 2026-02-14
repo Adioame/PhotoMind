@@ -261,9 +261,142 @@ export class PersonService {
   /**
    * 获取某人物的所有照片
    */
-  async getPersonPhotos(personId: number): Promise<any[]> {
+  async getPersonPhotos(personId: number, options?: { minConfidence?: number; primaryOnly?: boolean }): Promise<any[]> {
     await this.ensureDb()
-    return this.database.getPhotosByPerson(personId)
+    return this.database.getPhotosByPerson(personId, options)
+  }
+
+  /**
+   * 获取人物最佳头像
+   * 使用评分算法：置信度 * 单人照奖励 * 高置信度奖励
+   */
+  async getBestAvatar(personId: number): Promise<string | null> {
+    await this.ensureDb()
+
+    const candidates = this.database.getBestAvatarCandidates(personId, 5)
+    if (candidates.length === 0) return null
+
+    // 选择评分最高的头像
+    const best = candidates[0]
+    return best.face_thumbnail_path || best.file_path
+  }
+
+  /**
+   * 更新人物头像为最佳头像
+   */
+  async refreshPersonAvatar(personId: number): Promise<boolean> {
+    await this.ensureDb()
+
+    try {
+      const bestAvatar = await this.getBestAvatar(personId)
+      if (bestAvatar) {
+        this.database.updatePersonAvatar(personId, bestAvatar)
+        console.log(`[PersonService] 更新人物 ${personId} 头像为: ${bestAvatar}`)
+        return true
+      }
+      return false
+    } catch (error) {
+      console.error('[PersonService] 刷新头像失败:', error)
+      return false
+    }
+  }
+
+  /**
+   * 批量更新所有人物头像
+   */
+  async refreshAllAvatars(): Promise<{ updated: number; failed: number }> {
+    await this.ensureDb()
+
+    const persons = await this.getAllPersons()
+    let updated = 0
+    let failed = 0
+
+    for (const person of persons) {
+      const success = await this.refreshPersonAvatar(person.id)
+      if (success) {
+        updated++
+      } else {
+        failed++
+      }
+    }
+
+    console.log(`[PersonService] 批量更新头像完成: ${updated} 成功, ${failed} 失败`)
+    return { updated, failed }
+  }
+
+  /**
+   * 标记单人照为主要人物
+   * 合影中置信度最高的人脸会被标记为 primary
+   */
+  async markPrimaryFaces(): Promise<{ marked: number; errors: number }> {
+    await this.ensureDb()
+
+    let marked = 0
+    let errors = 0
+
+    try {
+      // 获取所有有照片的 photos
+      const photosWithMultipleFaces = this.database.query(`
+        SELECT photo_id, COUNT(*) as face_count
+        FROM detected_faces
+        WHERE person_id IS NOT NULL
+        GROUP BY photo_id
+      `)
+
+      for (const row of photosWithMultipleFaces) {
+        const { photo_id, face_count } = row
+
+        if (face_count === 1) {
+          // 单人照 - 自动标记为 primary
+          const faces = this.database.query(
+            'SELECT id FROM detected_faces WHERE photo_id = ?',
+            [photo_id]
+          )
+          if (faces.length > 0) {
+            this.database.setFacePrimary(faces[0].id, true)
+            marked++
+          }
+        } else {
+          // 合影 - 找出置信度最高的人脸标记为 primary
+          const faces = this.database.query(`
+            SELECT id, confidence
+            FROM detected_faces
+            WHERE photo_id = ? AND person_id IS NOT NULL
+            ORDER BY confidence DESC
+          `, [photo_id])
+
+          if (faces.length > 0) {
+            // 只有最高的设为 primary
+            this.database.setFacePrimary(faces[0].id, true)
+            marked++
+
+            // 其他的设为非 primary
+            for (let i = 1; i < faces.length; i++) {
+              this.database.setFacePrimary(faces[i].id, false)
+            }
+          }
+        }
+      }
+
+      console.log(`[PersonService] 标记 primary faces 完成: ${marked} 张照片`)
+      return { marked, errors }
+    } catch (error) {
+      console.error('[PersonService] 标记 primary faces 失败:', error)
+      return { marked, errors: errors + 1 }
+    }
+  }
+
+  /**
+   * 获取人物照片统计
+   */
+  async getPersonPhotoStats(personId: number): Promise<{
+    totalPhotos: number
+    primaryPhotos: number
+    groupPhotos: number
+    avgConfidence: number
+  }> {
+    await this.ensureDb()
+    return this.database.getPersonPhotoStats(personId)
   }
 
   /**
@@ -295,6 +428,107 @@ export class PersonService {
     return {
       totalPersons: persons.length,
       totalTags
+    }
+  }
+
+  /**
+   * 拆分人脸到新人物或迁移到现有Person
+   * 从当前人物的一张照片中拆分出人脸，可以：
+   * 1. 创建新人物（当 targetPersonId 为 null 时）
+   * 2. 迁移到已存在的Person（当 targetPersonId 不为 null 时）
+   */
+  async splitFaceToNewPerson(
+    photoId: number,
+    currentPersonId: number,
+    newPersonName: string,
+    targetPersonId?: number
+  ): Promise<{ success: boolean; newPersonId?: number; error?: string }> {
+    try {
+      await this.ensureDb()
+
+      // 1. 找到该照片关联的、属于当前人物的所有 face（按置信度排序）
+      const faces = this.database.query(
+        `SELECT id, confidence, face_thumbnail_path, embedding
+         FROM detected_faces
+         WHERE photo_id = ? AND person_id = ?
+         ORDER BY confidence DESC`,
+        [photoId, currentPersonId]
+      )
+
+      if (faces.length === 0) {
+        return {
+          success: false,
+          error: '该照片中未找到当前人物的脸部数据'
+        }
+      }
+
+      // 2. 取置信度最高的那张 face
+      const targetFace = faces[0]
+
+      let finalPersonId: number
+
+      // 3. 如果指定了 targetPersonId，迁移到现有Person
+      if (targetPersonId) {
+        const existingPerson = await this.getPersonById(targetPersonId)
+        if (!existingPerson) {
+          return {
+            success: false,
+            error: '目标人物不存在'
+          }
+        }
+        finalPersonId = targetPersonId
+        console.log(`[PersonService] 将人脸迁移到现有Person: ${existingPerson.name} (ID: ${targetPersonId})`)
+      } else {
+        // 4. 检查新人物名称是否已存在
+        const existing = await this.searchPersons(newPersonName)
+        const normalizedName = newPersonName.toLowerCase().trim()
+        const found = existing.find(p => p.name.toLowerCase() === normalizedName)
+        if (found) {
+          return {
+            success: false,
+            error: `EXISTING_PERSON:${found.id}`,
+            newPersonId: found.id
+          }
+        }
+
+        // 5. 创建新人物
+        finalPersonId = this.database.addPerson({
+          name: newPersonName,
+          displayName: newPersonName
+        })
+
+        // 6. 设置新人物的头像
+        if (targetFace.face_thumbnail_path) {
+          this.database.updatePersonAvatar(finalPersonId, targetFace.face_thumbnail_path)
+        }
+
+        console.log(`[PersonService] 创建新人物: "${newPersonName}" (ID: ${finalPersonId})`)
+      }
+
+      // 7. 迁移 face 到目标人物
+      this.database.run(
+        'UPDATE detected_faces SET person_id = ? WHERE id = ?',
+        [finalPersonId, targetFace.id]
+      )
+
+      // 8. 更新原人物的 face_count
+      await this.updatePersonFaceCount(currentPersonId)
+
+      // 9. 更新目标人物的 face_count
+      await this.updatePersonFaceCount(finalPersonId)
+
+      console.log(`[PersonService] 拆分完成: 照片 ${photoId} 的人脸已迁移到人物 ID: ${finalPersonId}`)
+
+      return {
+        success: true,
+        newPersonId: finalPersonId
+      }
+    } catch (error) {
+      console.error('[PersonService] 拆分人脸失败:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '未知错误'
+      }
     }
   }
 

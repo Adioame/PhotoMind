@@ -44,14 +44,23 @@ contextBridge.exposeInMainWorld('photoAPI', {
     // 人物搜索
     search: (options: { query: string; limit?: number; offset?: number; sortBy?: 'count' | 'recent' | 'oldest' }) =>
       ipcRenderer.invoke('people:search', options),
-    getPhotos: (filter: { personId: number; year?: number; month?: number; limit?: number; offset?: number }) =>
+    getPhotos: (filter: { personId: number; year?: number; month?: number; limit?: number; offset?: number; minConfidence?: number; primaryOnly?: boolean }) =>
       ipcRenderer.invoke('people:get-photos', filter),
     getTimeline: (personId: number) =>
       ipcRenderer.invoke('people:get-timeline', personId),
+    getPhotoStats: (personId: number) =>
+      ipcRenderer.invoke('people:get-photo-stats', personId),
+    refreshAvatar: (personId: number) =>
+      ipcRenderer.invoke('people:refresh-avatar', personId),
+    markPrimaryFaces: () =>
+      ipcRenderer.invoke('people:mark-primary-faces'),
     getSuggestions: (query: string, limit?: number) =>
       ipcRenderer.invoke('people:get-suggestions', query, limit),
     getPopular: (limit?: number) =>
       ipcRenderer.invoke('people:get-popular', limit),
+    // 拆分人脸到新人物或迁移到现有Person
+    splitFace: (photoId: number, currentPersonId: number, newPersonName: string, targetPersonId?: number) =>
+      ipcRenderer.invoke('people:split-face', { photoId, currentPersonId, newPersonName, targetPersonId }),
     getSearchStats: () =>
       ipcRenderer.invoke('people:get-search-stats'),
     getSearchHistory: () =>

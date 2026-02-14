@@ -460,11 +460,17 @@ function setupIPCHandlers() {
   ipcMain.handle('photos:get-detail', async (event, photoId) => {
     console.log('[IPC photos:get-detail] 收到请求, photoId:', photoId, '类型:', typeof photoId)
     try {
+      console.log('[IPC photos:get-detail] localPhotoService:', !!localPhotoService, 'database:', !!database)
       // 优先从本地数据库获取
       if (localPhotoService && database) {
         console.log('[IPC photos:get-detail] 使用本地数据库查询')
         const numericId = parseInt(photoId)
-        console.log('[IPC photos:get-detail] 转换后的ID:', numericId)
+        console.log('[IPC photos:get-detail] 转换后的ID:', numericId, 'isNaN:', isNaN(numericId))
+
+        if (isNaN(numericId)) {
+          console.log('[IPC photos:get-detail] ID 无效')
+          return null
+        }
 
         const photo = database.getPhotoById(numericId)
         console.log('[IPC photos:get-detail] 数据库查询结果:', photo ? '找到照片' : '未找到')
@@ -472,6 +478,18 @@ function setupIPCHandlers() {
         if (photo) {
           console.log('[IPC photos:get-detail] 返回照片详情:', photo.id, photo.file_name)
           // 统一字段映射：下划线转驼峰
+          // 注意：exif_data 和 location_data 在数据库层已经被解析为对象，不需要再 JSON.parse
+          const normalizeField = (val: any) => {
+            if (typeof val === 'string') {
+              try {
+                return JSON.parse(val)
+              } catch {
+                return val
+              }
+            }
+            return val || (typeof val === 'object' ? val : {})
+          }
+
           return {
             id: photo.id,
             uuid: photo.uuid,
@@ -483,8 +501,8 @@ function setupIPCHandlers() {
             height: photo.height,
             takenAt: photo.taken_at,
             thumbnailPath: photo.thumbnail_path,
-            exif: photo.exif_data ? JSON.parse(photo.exif_data) : {},
-            location: photo.location_data ? JSON.parse(photo.location_data) : null,
+            exif: normalizeField(photo.exif_data),
+            location: normalizeField(photo.location_data),
             status: photo.status || 'local'
           }
         }
@@ -2376,9 +2394,10 @@ function setupIPCHandlers() {
   })
 
   // 获取人物照片
-  ipcMain.handle('people:get-photos', async (_, filter: { personId: number; year?: number; month?: number; limit?: number; offset?: number }) => {
+  ipcMain.handle('people:get-photos', async (_, filter: { personId: number; year?: number; month?: number; limit?: number; offset?: number; minConfidence?: number; primaryOnly?: boolean }) => {
     console.log('[IPC people:get-photos] 收到 filter:', JSON.stringify(filter))
     console.log('[IPC people:get-photos] personId:', filter.personId, '类型:', typeof filter.personId)
+    console.log('[IPC people:get-photos] primaryOnly:', filter.primaryOnly)
     try {
       const { personSearchService } = await import('../services/personSearchService.js')
       const result = await personSearchService.getPersonPhotos(filter)
@@ -2387,6 +2406,51 @@ function setupIPCHandlers() {
     } catch (error) {
       console.error('[IPC people:get-photos] 异常:', error)
       throw error
+    }
+  })
+
+  // 获取人物照片统计
+  ipcMain.handle('people:get-photo-stats', async (_, personId: number) => {
+    try {
+      const { personService } = await import('../services/personService.js')
+      return await personService.getPersonPhotoStats(personId)
+    } catch (error) {
+      console.error('[IPC people:get-photo-stats] 异常:', error)
+      return { totalPhotos: 0, primaryPhotos: 0, groupPhotos: 0, avgConfidence: 0 }
+    }
+  })
+
+  // 刷新人物头像
+  ipcMain.handle('people:refresh-avatar', async (_, personId: number) => {
+    try {
+      const { personService } = await import('../services/personService.js')
+      const success = await personService.refreshPersonAvatar(personId)
+      return { success }
+    } catch (error) {
+      console.error('[IPC people:refresh-avatar] 异常:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  // 标记主要人脸
+  ipcMain.handle('people:mark-primary-faces', async () => {
+    try {
+      const { personService } = await import('../services/personService.js')
+      return await personService.markPrimaryFaces()
+    } catch (error) {
+      console.error('[IPC people:mark-primary-faces] 异常:', error)
+      return { marked: 0, errors: 1 }
+    }
+  })
+
+  // 拆分人脸到新人物或迁移到现有Person
+  ipcMain.handle('people:split-face', async (_, { photoId, currentPersonId, newPersonName, targetPersonId }: { photoId: number; currentPersonId: number; newPersonName: string; targetPersonId?: number }) => {
+    try {
+      const { personService } = await import('../services/personService.js')
+      return await personService.splitFaceToNewPerson(photoId, currentPersonId, newPersonName, targetPersonId)
+    } catch (error) {
+      console.error('[IPC people:split-face] 异常:', error)
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' }
     }
   })
 

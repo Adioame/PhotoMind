@@ -17,6 +17,15 @@ import { personService, Person } from './personService.js'
 function normalizePhotoFields(photo: any): any {
   if (!photo) return photo
 
+  // 将绝对路径转换为 local-resource:// 协议路径
+  // 这样 Electron 才能加载本地文件
+  const toLocalResource = (path: string | null): string | null => {
+    if (!path) return null
+    if (path.startsWith('local-resource://')) return path
+    if (path.startsWith('/')) return `local-resource://${path}`
+    return path
+  }
+
   return {
     id: photo.id,
     uuid: photo.uuid,
@@ -28,7 +37,7 @@ function normalizePhotoFields(photo: any): any {
     height: photo.height,
     takenAt: photo.taken_at,
     createdAt: photo.created_at,
-    thumbnailPath: photo.thumbnail_path,
+    thumbnailPath: toLocalResource(photo.thumbnail_path),
     status: photo.status,
     // location 字段需要从 location_data 转换
     location: photo.location_data ? {
@@ -62,6 +71,8 @@ export interface PersonPhotoFilter {
   month?: number
   limit?: number
   offset?: number
+  minConfidence?: number
+  primaryOnly?: boolean
 }
 
 export interface PersonSearchResult {
@@ -75,6 +86,7 @@ export interface PersonPhotoResult {
   photo: any
   taggedAt: string
   confidence: number
+  isPrimary: boolean
 }
 
 export interface PersonSearchResponse {
@@ -240,7 +252,7 @@ export class PersonSearchService {
    * 获取某人物的照片
    */
   async getPersonPhotos(filter: PersonPhotoFilter): Promise<PersonPhotosResponse> {
-    let { personId, year, month, limit = 50, offset = 0 } = filter
+    let { personId, year, month, limit = 50, offset = 0, minConfidence, primaryOnly } = filter
 
     // 确保 personId 是 number 类型
     if (typeof personId === 'string') {
@@ -255,7 +267,7 @@ export class PersonSearchService {
     }
     console.log(`[PersonSearch] 找到人物: ${person.name}`)
 
-    let photos = await personService.getPersonPhotos(personId)
+    let photos = await personService.getPersonPhotos(personId, { minConfidence, primaryOnly })
     console.log(`[PersonSearch] getPersonPhotos 返回: ${photos.length} 张照片`)
 
     if (photos.length > 0) {
@@ -321,7 +333,8 @@ export class PersonSearchService {
         return {
           photo: normalized,
           taggedAt: p.created_at || new Date().toISOString(),
-          confidence: 1.0
+          confidence: p.face_confidence || 0,
+          isPrimary: p.is_primary === 1
         }
       } catch (e) {
         console.error(`[PersonSearch] 转换失败:`, e)

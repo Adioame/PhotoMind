@@ -33,8 +33,10 @@
           <n-avatar
             round
             :size="80"
+            :src="avatarUrl"
             :style="{ backgroundColor: avatarColor }"
             class="person-avatar"
+            fallback-src="/default-avatar.png"
           >
             {{ initials }}
           </n-avatar>
@@ -66,13 +68,50 @@
         </n-space>
       </header>
 
+      <!-- 过滤器 -->
+      <section class="filter-section" v-if="person">
+        <div class="filter-controls">
+          <n-space align="center">
+            <n-switch v-model:value="primaryOnly" @update:value="onFilterChange">
+              <template #checked>只显示个人照</template>
+              <template #unchecked>显示所有照片</template>
+            </n-switch>
+            <span class="filter-hint" v-if="photoStats">
+              共 {{ photoStats.totalPhotos }} 张
+              <span class="stats-detail">
+                ({{ photoStats.primaryPhotos }} 张个人照 + {{ photoStats.groupPhotos }} 张合影)
+              </span>
+            </span>
+          </n-space>
+        </div>
+      </section>
+
       <!-- 照片网格 -->
       <section class="photos-section">
-        <PhotoGrid
-          :photos="photos"
-          :loading="loadingPhotos"
-          @photo-click="openPhoto"
-        />
+        <!-- 人物拆分模式：自定义网格渲染 -->
+        <div v-if="!loadingPhotos && photos.length > 0" class="photo-grid">
+          <div
+            v-for="photo in photos"
+            :key="photo.id"
+            class="photo-card"
+            @click="openPhoto(photo)"
+          >
+            <img
+              :src="photo.thumbnailPath || photo.filePath"
+              :alt="photo.fileName"
+              loading="lazy"
+              @error="handleImageError"
+            />
+            <!-- 人物拆分按钮 -->
+            <button
+              class="split-face-btn"
+              @click.stop="handleSplitFace(photo)"
+              title="拆分出新人物"
+            >
+              <span class="split-icon">👤+</span>
+            </button>
+          </div>
+        </div>
 
         <EmptyState
           v-if="photos.length === 0 && !loadingPhotos"
@@ -125,6 +164,54 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 拆分人物弹窗 -->
+    <n-modal
+      v-model:show="showSplitModal"
+      title="标记人物"
+      preset="card"
+      class="split-modal"
+      :bordered="false"
+    >
+      <n-tabs v-model:value="splitMode" type="line">
+        <!-- 创建新人物 -->
+        <n-tab-pane name="create" tab="创建新人物">
+          <p class="split-hint">
+            将这张照片中的<strong>{{ displayName }}</strong>标记为新人物
+          </p>
+          <n-input
+            v-model:value="splitNewName"
+            placeholder="输入新人物名称，例如：爸爸"
+            maxlength="50"
+            show-count
+            @keyup.enter="confirmSplit"
+          />
+        </n-tab-pane>
+
+        <!-- 分配给现有人物 -->
+        <n-tab-pane name="assign" tab="分配给现有Person">
+          <p class="split-hint">
+            将这张照片中的<strong>{{ displayName }}</strong>迁移到已存在的人物
+          </p>
+          <n-select
+            v-model:value="splitTargetPersonId"
+            :options="splitTargetOptions"
+            placeholder="选择目标人物"
+            filterable
+            clearable
+          />
+        </n-tab-pane>
+      </n-tabs>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showSplitModal = false">取消</n-button>
+          <n-button type="primary" @click="confirmSplit" :disabled="!canConfirmSplit">
+            确认
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -135,7 +222,6 @@ import { useMessage, useDialog } from 'naive-ui'
 import { Edit24Regular, Merge24Regular, Delete24Regular } from '@vicons/fluent'
 import { usePeopleStore, type Person } from '@/stores/peopleStore'
 import BreadcrumbNav from '@/components/nav/BreadcrumbNav.vue'
-import PhotoGrid from '@/components/PhotoGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { generatePersonBreadcrumb } from '@/utils/breadcrumbConfig'
 
@@ -158,6 +244,17 @@ const loading = ref(false)
 const loadingPhotos = ref(false)
 let isLoadingData = false // 防止竞态条件的执行标志
 
+// 过滤器状态
+// TODO: 当前默认显示所有照片，因为 is_primary 标记尚未实现
+// 后续需要根据人脸大小/位置自动标记主要人脸，或提供手动标记功能
+const primaryOnly = ref(false) // 默认显示所有照片（包括合影）
+const photoStats = ref<{
+  totalPhotos: number
+  primaryPhotos: number
+  groupPhotos: number
+  avgConfidence: number
+} | null>(null)
+
 // 重命名弹窗
 const showRenameModal = ref(false)
 const newName = ref('')
@@ -165,6 +262,13 @@ const newName = ref('')
 // 合并弹窗
 const showMergeModal = ref(false)
 const mergeTargetId = ref<number | null>(null)
+
+// 拆分弹窗
+const showSplitModal = ref(false)
+const splitMode = ref<'create' | 'assign'>('create')
+const splitNewName = ref('')
+const splitTargetPersonId = ref<number | null>(null)
+const splitTargetPhoto = ref<any>(null)
 
 // 头像颜色映射 - 使用新的配色方案
 const avatarColors = [
@@ -189,6 +293,23 @@ const avatarColor = computed(() => {
   return avatarColors[index]
 })
 
+// 头像 URL - 转换为 local-resource 协议
+const avatarUrl = computed(() => {
+  const path = person.value?.avatar_path
+  if (!path) return null
+
+  // 已经是完整协议路径
+  if (path.startsWith('local-resource://')) return path
+
+  // 绝对路径转为 local-resource 协议
+  if (path.startsWith('/')) {
+    return `local-resource://${path}`
+  }
+
+  // 相对路径（如 thumbnails/faces/xxx.jpg）转为 local-resource
+  return `local-resource:///${path}`
+})
+
 const breadcrumbItems = computed(() => {
   return generatePersonBreadcrumb(displayName.value, person.value?.id)
 })
@@ -200,6 +321,27 @@ const mergeOptions = computed(() => {
       label: p.display_name || p.name,
       value: p.id
     }))
+})
+
+// 拆分目标人物选项（排除当前人物）
+const splitTargetOptions = computed(() => {
+  console.log('[splitTargetOptions] peopleStore.people:', peopleStore.people.length, 'current person:', person.value?.id)
+  const options = peopleStore.people
+    .filter(p => p.id !== person.value?.id)
+    .map(p => ({
+      label: `${p.display_name || p.name} (${p.face_count}张照片)`,
+      value: p.id
+    }))
+  console.log('[splitTargetOptions] filtered options:', options.length)
+  return options
+})
+
+// 是否可以确认拆分
+const canConfirmSplit = computed(() => {
+  if (splitMode.value === 'create') {
+    return splitNewName.value.trim().length > 0
+  }
+  return splitTargetPersonId.value !== null
 })
 
 // 加载人物数据
@@ -228,7 +370,10 @@ async function loadPersonData() {
 
     if (person.value) {
       peopleStore.setLastVisitedPerson(id)
-      await loadPersonPhotos(id)
+      await Promise.all([
+        loadPersonPhotos(id),
+        loadPhotoStats(id)
+      ])
     } else {
       console.log('[PersonDetail] 人物不存在，停止加载照片')
     }
@@ -241,12 +386,29 @@ async function loadPersonData() {
   }
 }
 
+// 加载人物照片统计
+async function loadPhotoStats(personId: number) {
+  try {
+    const stats = await (window as any).photoAPI?.people?.getPhotoStats?.(personId)
+    if (stats) {
+      photoStats.value = stats
+    }
+  } catch (error) {
+    console.error('[PersonDetail] 加载照片统计失败:', error)
+  }
+}
+
 // 加载人物照片
 async function loadPersonPhotos(personId: number) {
   loadingPhotos.value = true
   try {
     console.log(`[PersonDetail] 加载人物 ${personId} 的照片...`)
-    const result = await (window as any).photoAPI.people.getPhotos({ personId })
+    console.log(`[PersonDetail] 过滤器: primaryOnly=${primaryOnly.value}`)
+
+    const result = await (window as any).photoAPI.people.getPhotos({
+      personId,
+      primaryOnly: primaryOnly.value
+    })
 
     console.log('[PersonDetail] API 返回结果:', result)
     console.log('[PersonDetail] photos 数量:', result?.photos?.length || 0)
@@ -268,6 +430,19 @@ async function loadPersonPhotos(personId: number) {
   } finally {
     loadingPhotos.value = false
   }
+}
+
+// 过滤器变化时重新加载
+async function onFilterChange() {
+  if (person.value) {
+    await loadPersonPhotos(person.value.id)
+  }
+}
+
+// 图片加载失败处理
+function handleImageError(e: Event) {
+  const img = e.target as HTMLImageElement
+  img.src = '/placeholder-image.png'
 }
 
 // 打开照片
@@ -346,6 +521,86 @@ async function confirmMerge() {
   })
 
   showMergeModal.value = false
+}
+
+// 拆分人物
+async function handleSplitFace(photo: any) {
+  splitTargetPhoto.value = photo
+  splitMode.value = 'create'
+  splitNewName.value = ''
+  splitTargetPersonId.value = null
+
+  // 确保人物列表已加载
+  if (peopleStore.people.length === 0) {
+    await peopleStore.fetchPeople()
+  }
+
+  showSplitModal.value = true
+}
+
+async function confirmSplit() {
+  if (!person.value || !splitTargetPhoto.value) {
+    return false
+  }
+
+  // 验证输入
+  if (splitMode.value === 'create' && !splitNewName.value.trim()) {
+    message.error('请输入新人物名称')
+    return false
+  }
+  if (splitMode.value === 'assign' && !splitTargetPersonId.value) {
+    message.error('请选择目标人物')
+    return false
+  }
+
+  try {
+    const result = await (window as any).photoAPI?.people?.splitFace?.(
+      splitTargetPhoto.value.id,
+      person.value.id,
+      splitMode.value === 'create' ? splitNewName.value.trim() : '',
+      splitMode.value === 'assign' ? splitTargetPersonId.value : undefined
+    )
+
+    if (result?.success) {
+      const targetName = splitMode.value === 'create'
+        ? splitNewName.value.trim()
+        : splitTargetOptions.value.find(o => o.value === splitTargetPersonId.value)?.label.split(' (')[0]
+      message.success(`已将照片迁移到 "${targetName}"`)
+      // 刷新数据
+      await Promise.all([
+        loadPersonData(),
+        peopleStore.fetchPeople()
+      ])
+    } else if (result?.error?.startsWith('EXISTING_PERSON:')) {
+      // 人物已存在，提示用户切换到"分配给现有人物"模式
+      const existingId = parseInt(result.error.split(':')[1])
+      const existingName = splitNewName.value.trim()
+      dialog.info({
+        title: '人物已存在',
+        content: `人物 "${existingName}" 已存在。是否将照片分配给该人物？`,
+        positiveText: '分配给该人物',
+        negativeText: '取消',
+        onPositiveClick: async () => {
+          // 自动切换到assign模式并选择该人物
+          splitMode.value = 'assign'
+          splitTargetPersonId.value = existingId
+          await confirmSplit()
+        }
+      })
+      return false
+    } else {
+      message.error(result?.error || '拆分失败')
+    }
+  } catch (error) {
+    console.error('拆分失败:', error)
+    message.error('拆分失败')
+  } finally {
+    showSplitModal.value = false
+    splitTargetPhoto.value = null
+    splitTargetPersonId.value = null
+    splitNewName.value = ''
+  }
+  return true
 }
 
 // 删除人物
@@ -457,6 +712,33 @@ onMounted(() => {
 }
 
 /* ================================
+   过滤器区域
+   ================================ */
+.filter-section {
+  margin-bottom: var(--space-lg);
+}
+
+.filter-controls {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md) var(--space-lg);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.filter-hint {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.stats-detail {
+  color: var(--text-tertiary);
+  margin-left: var(--space-xs);
+}
+
+/* ================================
    照片区域
    ================================ */
 .photos-section {
@@ -464,6 +746,96 @@ onMounted(() => {
   border-radius: var(--radius-lg);
   padding: var(--space-xl);
   box-shadow: var(--shadow-md);
+}
+
+/* ================================
+   照片网格
+   ================================ */
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-md);
+}
+
+.photo-card {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-tertiary);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.photo-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.photo-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.photo-card:hover img {
+  transform: scale(1.05);
+}
+
+/* 拆分按钮 */
+.split-face-btn {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.photo-card:hover .split-face-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.split-face-btn:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  transform: scale(1.1) !important;
+}
+
+.split-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* 拆分弹窗样式 */
+.split-modal {
+  width: 480px;
+  max-width: 90vw;
+}
+
+.split-hint {
+  margin-bottom: var(--space-md);
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.split-hint strong {
+  color: var(--text-primary);
 }
 
 /* ================================
@@ -510,6 +882,24 @@ onMounted(() => {
 
   .photos-section {
     padding: var(--space-md);
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--space-sm);
+  }
+
+  .split-face-btn {
+    opacity: 1;
+    transform: scale(1);
+    width: 32px;
+    height: 32px;
+  }
+
+  .filter-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
   }
 }
 </style>
